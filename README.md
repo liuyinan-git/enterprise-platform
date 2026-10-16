@@ -43,7 +43,8 @@ curl http://localhost:7550/health/ready
 ```bash
 cd backend
 pip install -r requirements.txt
-# 需要可用的 MySQL，并按需设置环境变量或 backend/.env
+cp .env.example .env        # 首次先复制本地环境变量模板，改 CHANGE_ME 占位
+# 需要可用的 MySQL，并已创建 enterprise_platform 数据库
 alembic upgrade head
 uvicorn app.main:app --reload --port 7550
 

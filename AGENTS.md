@@ -234,7 +234,7 @@ enterprise-platform/
 ## 九、启动与部署
 
 - **Docker Compose**：`cp .env.example .env` 后 `docker compose up -d`；api 容器启动先 `alembic upgrade head` 再 uvicorn。
-- **后端本地**：`cd backend && uvicorn app.main:app --reload --port 7550`。
+- **后端本地**：`cd backend && cp .env.example .env`（改 `CHANGE_ME` 占位后）`&& uvicorn app.main:app --reload --port 7550`。
 - **前端本地**：`cd frontend && npm run dev`（Vite 5170，代理到 7550）。
 - **迁移**：`cd backend && alembic upgrade head`。
 - **异步 Worker / 调度**：`celery -A app.tasks.celery_app.celery_app worker --loglevel=info --pool=solo` 与 `... beat --loglevel=info`。
