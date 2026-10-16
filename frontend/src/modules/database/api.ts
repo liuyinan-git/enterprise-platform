@@ -141,7 +141,7 @@ export interface ContainerItem {
   image: string
   image_id: string
   managed_type: string
-  /** 类型是怎么识别出来的：label / image / name / none */
+  /** 类型是怎么识别出来的：label / image / name / app（认出品牌但属应用层）/ none */
   managed_type_source: string
   state: string
   status: string

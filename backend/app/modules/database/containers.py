@@ -15,7 +15,10 @@ from app.modules.database.container_config import container_settings
 # 判定顺序是 label → 镜像名 → 容器名，越靠后越不确定，所以：
 #   - 镜像名用「整段匹配」（要求 mysql 后面紧接 : - @ 或字符串结束），
 #     这样 mysql-backup 之类的工具镜像不会被误判成数据库；
-#   - 容器名只收窄到毫无歧义的写法（pg 要求前面是分隔符，避免误伤 ppg）。
+#   - 容器名只收窄到毫无歧义的写法（pg 要求前面是分隔符，避免误伤 ppg）；
+#   - 镜像名 / 容器名推断出来的结果，最后还要过一道应用层判据 `_is_app_tier`
+#     （后端 / 前端 / UI / MCP 这类不是数据存储，见下面 _APP_TIER_TOKENS 的说明）。
+#     label 声明不受这道判据约束。
 MANAGED_TYPES = (
     # 关系型
     "postgres", "mysql", "mariadb", "oracle", "sqlserver",
@@ -90,7 +93,8 @@ _IMAGE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("qdrant", _image_pattern("qdrant")),
     ("weaviate", _image_pattern("weaviate")),
     ("chroma", _image_pattern("chroma", "chromadb")),
-    # 这两个是品牌名而非仓库段，用子串匹配（wechatopenai/weknora-app 这类）
+    # 这两个是品牌名而非仓库段，用子串匹配（wechatopenai/weknora-app 这类）。
+    # 子串匹配必然过宽，所以这两个（以及所有推断结果）都要再经 `_guarded` 的应用层判据。
     ("weknora", re.compile(r"weknora", re.IGNORECASE)),
     ("cognee", re.compile(r"cognee", re.IGNORECASE)),
 )
@@ -119,8 +123,57 @@ _NAME_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# 应用层容器（后端 / 前端 / UI / MCP / 边车…）不是数据存储，一律不纳入受管类型。
+#
+# 为什么需要这一层：`weknora` / `cognee` 是**品牌名**而不是仓库段，只能子串匹配，
+# 而同一个品牌下既有知识库本体、也有业务方自己起的应用容器，光看品牌名分不开。
+# 本机实测的 11 个命中全部是应用层：
+#   weknora-business-backend / weknora-business-frontend / wechatopenai/weknora-app /
+#   wechatopenai/weknora-ui / wechatopenai/weknora-docreader / weknora-rerank（镜像是 llama.cpp，
+#   只有容器名带 weknora）/ cognee-backend / cognee-mcp / cognee-cognee / cognee/cognee-ui /
+#   cognee-frontend
+# 它们对应的真数据存储（WeKnora-postgres → paradedb、cognee-src-postgres → pgvector、
+# 各自的 redis）本来就已经按镜像名正确识别成 postgres / redis 了，品牌名不提供任何额外信号。
+#
+# 判据因此从「叫什么品牌」换成「这一层是应用还是数据存储」：镜像名 + 容器名切词后
+# 只要命中下面任一个，就认定是应用层，归为未分类（只读，且 `managed_type_source="app"`）。
+#
+# 刻意**不收** `server`：mcr.microsoft.com/mssql/server 的末段就是 server，收了会误伤 SQL Server；
+# 同理不收 `registry` / `database`，oracle 官方镜像路径里就有。
+#
+# 想强行纳管某个应用容器（例如就要管 WeKnora 本体），给它打 `platform.type` 标签即可——
+# label 是人工显式声明、优先级最高，**不受本判据约束**。
+_APP_TIER_TOKENS = frozenset({
+    "app", "backend", "frontend", "ui", "web", "webui", "api", "mcp",
+    "worker", "beat", "gateway", "proxy", "nginx", "exporter",
+    "docreader", "rerank", "studio", "sandbox", "console", "dashboard", "admin",
+})
+
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _is_app_tier(image: str, name: str) -> bool:
+    """镜像名 + 容器名一起切词判断是否应用层。
+
+    两边都要看：`cognee-src-backend` 的镜像是 `cognee-cognee:latest`（自己看不出是应用），
+    而 `biz-backend` 的镜像 `weknora-business-backend` 又只有镜像能看出来。
+    """
+    tokens = set(_TOKEN_SPLIT.split(f"{image or ''} {name or ''}".lower()))
+    return bool(tokens & _APP_TIER_TOKENS)
+
+
+def _guarded(managed_type: str, source: str, image: str, name: str) -> tuple[str, str]:
+    """推断出的类型先过应用层判据；命中则降级为未分类，并留下 source="app" 说明原因。"""
+    if _is_app_tier(image, name):
+        return "unknown", "app"
+    return managed_type, source
+
+
 def classify_container(labels: dict, image: str, name: str) -> tuple[str, str]:
-    """label 优先，镜像名回退，容器名兜底；都不中返回 ("unknown", "none")。"""
+    """label 优先，镜像名回退，容器名兜底；都不中返回 ("unknown", "none")。
+
+    label 是人工显式声明，不受应用层判据约束；推断出的结果才需要过 `_guarded`。
+    """
     declared = str(labels.get("platform.type") or "").strip().lower()
     if declared:
         mapped = _TYPE_ALIASES.get(declared)
@@ -128,10 +181,10 @@ def classify_container(labels: dict, image: str, name: str) -> tuple[str, str]:
             return mapped, "label"
     for managed_type, pattern in _IMAGE_PATTERNS:
         if pattern.search(image or ""):
-            return managed_type, "image"
+            return _guarded(managed_type, "image", image, name)
     for managed_type, pattern in _NAME_PATTERNS:
         if pattern.search(name or ""):
-            return managed_type, "name"
+            return _guarded(managed_type, "name", image, name)
     return "unknown", "none"
 
 
@@ -154,6 +207,8 @@ def refusal_reason(container: dict) -> str | None:
     if container["protected"]:
         return f"平台自身容器受保护，禁止该操作（{container['protected_reason']}）"
     if container["managed_type"] == "unknown":
+        if container.get("managed_type_source") == "app":
+            return "识别为应用层容器（后端 / 前端 / UI 等），不是数据存储，只读"
         return f"未识别为受管类型（当前纳管 {len(MANAGED_TYPES)} 类），只读"
     return None
 

@@ -56,6 +56,9 @@ export function typeSourceLabel(source: string): string {
       return '按镜像名推断'
     case 'name':
       return '按容器名推断'
+    case 'app':
+      // 镜像名/容器名认出了某个品牌，但这一层是应用（后端/前端/UI）而非数据存储
+      return '应用层容器，不是数据存储'
     default:
       return '未能识别'
   }
