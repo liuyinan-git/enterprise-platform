@@ -1,0 +1,32 @@
+# --- 环境与密钥 ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# --- Node / 前端 ---
+node_modules/
+dist/
+*.local
+
+# --- 运行时产物 ---
+*.log
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+
+# --- 上传附件 ---
+backend/uploads/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+.DS_Store

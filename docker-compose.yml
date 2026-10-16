@@ -1,0 +1,91 @@
+# 编排：mysql + redis + api + worker + scheduler。
+# frontend / nginx / ollama 在后续阶段逐步启用。
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-enterprise_log}
+      MYSQL_USER: ${MYSQL_USER:-log_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-CHANGE_ME_STRONG_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-CHANGE_ME_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:-CHANGE_ME_REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend_net
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "7552:7552"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - backend_net
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    command:
+      - sh
+      - -c
+      - celery -A app.tasks.celery_app.celery_app worker --loglevel=info
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - backend_net
+
+  scheduler:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    command:
+      - sh
+      - -c
+      - celery -A app.tasks.celery_app.celery_app beat --loglevel=info
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - backend_net
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  backend_net:
+    driver: bridge

@@ -1,0 +1,8 @@
+/* 全局基础样式：消除 body 默认 margin，建立高度链，避免布局出现多余滚动条 */
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
