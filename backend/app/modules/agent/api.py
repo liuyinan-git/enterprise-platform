@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 from app.core.auth import require_roles
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
+from app.modules.agent.container_api import router as container_router
+from app.modules.agent.endpoint_api import router as endpoint_router
 from app.modules.agent.models import AgentAudit, AgentRegistry
+from app.modules.agent.overview_api import router as overview_router
+from app.modules.agent.project_api import router as project_router
 from app.modules.agent.schemas import AgentIn, AgentUpdate
 from app.modules.agent.services import agent_status, record_audit
 
@@ -14,6 +18,14 @@ router = APIRouter(
     tags=["agent"],
     dependencies=[Depends(require_roles("admin", "viewer", "agent_admin"))],
 )
+
+# AI Agent 平台的四个子 router 并入本 router：因此改 main.py 的事情一件都不用做。
+# 读权限由本 router 的 require_roles 覆盖；各文件里的写接口再逐路由加严。
+# 路径写成 "/agent/...", 叠加本 router 的 "/api/v1" 前缀后即 "/api/v1/agent/..."。
+router.include_router(container_router)
+router.include_router(project_router)
+router.include_router(endpoint_router)
+router.include_router(overview_router)
 
 
 def _serialize(a: AgentRegistry) -> dict:

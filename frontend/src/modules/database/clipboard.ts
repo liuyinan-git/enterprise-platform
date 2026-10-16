@@ -1,30 +1,6 @@
 /**
- * 复制文本到剪贴板。
+ * 已提升到 `@/core/util/clipboard`（database 与 agent 两个模块共用）。
  *
- * 前端跑在 `http://host:5170`（非安全上下文），`navigator.clipboard` 可能是
- * `undefined`，所以必须保留 `textarea + execCommand` 的回退路径。
+ * 这里保留一行 re-export，让既有引用路径继续可用，行为不变。
  */
-export async function copyText(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      // 落到下面的回退路径
-    }
-  }
-  try {
-    const area = document.createElement('textarea')
-    area.value = text
-    area.setAttribute('readonly', '')
-    area.style.position = 'fixed'
-    area.style.top = '-1000px'
-    document.body.appendChild(area)
-    area.select()
-    const copied = document.execCommand('copy')
-    document.body.removeChild(area)
-    return copied
-  } catch {
-    return false
-  }
-}
+export { copyText } from '@/core/util/clipboard'

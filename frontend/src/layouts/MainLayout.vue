@@ -60,7 +60,21 @@ const menuGroups: { title: string; items: MenuItem[] }[] = [
   },
   {
     title: '智能体管控',
-    items: [{ path: '/agents', title: '智能体管理', roles: ['viewer', 'agent_admin'] }],
+    items: [
+      { path: '/agents', title: '智能体管理', roles: ['viewer', 'agent_admin'] },
+      { path: '/agent/overview', title: '平台概览', roles: ['viewer', 'agent_admin'] },
+      // 该页有容器启停按钮，因此容器操作角色也要能进（照数据库实例页的既有做法）
+      {
+        path: '/agent/containers',
+        title: 'Docker 容器',
+        roles: ['viewer', 'agent_admin', 'agent_container_admin'],
+      },
+      { path: '/agent/projects', title: '项目与分类规则', roles: ['viewer', 'agent_admin'] },
+      { path: '/agent/endpoints', title: '接口监控', roles: ['viewer', 'agent_admin'] },
+      { path: '/agent/langgraph', title: 'LangGraph 管理', roles: ['viewer', 'agent_admin'] },
+      { path: '/agent/history', title: '监控历史', roles: ['viewer', 'agent_admin'] },
+      { path: '/agent/settings', title: '系统设置', roles: ['viewer', 'agent_admin'] },
+    ],
   },
   {
     title: '模型管控',

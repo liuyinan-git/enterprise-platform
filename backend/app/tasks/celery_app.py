@@ -80,4 +80,14 @@ celery_app.conf.beat_schedule = {
         "task": "check_database_health",
         "schedule": 60.0,
     },
+    # 周期探测 AI Agent 平台登记的端点（AI 服务 + LangGraph）
+    "check-agent-endpoints": {
+        "task": "check_agent_endpoints",
+        "schedule": 60.0,
+    },
+    # 周期清理超保留期的端点监控历史
+    "cleanup-agent-history": {
+        "task": "cleanup_agent_history",
+        "schedule": 3600.0,
+    },
 }
