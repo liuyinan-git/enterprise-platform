@@ -9,7 +9,7 @@
         text-color="#a6b7cf"
         active-text-color="#409eff"
       >
-        <el-sub-menu v-for="group in menuGroups" :key="group.title" :index="group.title">
+        <el-sub-menu v-for="group in visibleMenuGroups" :key="group.title" :index="group.title">
           <template #title>
             <span>{{ group.title }}</span>
           </template>
@@ -34,54 +34,69 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useAuthStore } from '@/core/auth/store'
 
-const menuGroups = [
+interface MenuItem {
+  path: string
+  title: string
+  roles: string[]
+}
+
+const menuGroups: { title: string; items: MenuItem[] }[] = [
   {
     title: '总览',
-    items: [{ path: '/dashboard', title: '安全态势总览' }],
+    items: [{ path: '/dashboard', title: '安全态势总览', roles: [] }],
   },
   {
     title: '日志管控',
     items: [
-      { path: '/logs', title: '日志检索' },
-      { path: '/events', title: '安全事件中心' },
-      { path: '/alerts', title: '告警管理' },
-      { path: '/rules', title: '规则管理' },
-      { path: '/devices', title: '设备管理' },
-      { path: '/collectors', title: '采集端管理' },
+      { path: '/logs', title: '日志检索', roles: ['viewer', 'log_admin'] },
+      { path: '/events', title: '安全事件中心', roles: ['viewer', 'log_admin'] },
+      { path: '/alerts', title: '告警管理', roles: ['viewer', 'log_admin'] },
+      { path: '/rules', title: '规则管理', roles: ['viewer', 'log_admin'] },
+      { path: '/devices', title: '设备管理', roles: ['viewer', 'log_admin'] },
+      { path: '/collectors', title: '采集端管理', roles: ['viewer', 'log_admin'] },
     ],
   },
   {
     title: '智能体管控',
-    items: [{ path: '/agents', title: '智能体管理' }],
+    items: [{ path: '/agents', title: '智能体管理', roles: ['viewer', 'agent_admin'] }],
   },
   {
     title: '模型管控',
     items: [
-      { path: '/model-providers', title: '模型供应商' },
-      { path: '/models', title: '模型注册' },
-      { path: '/model-usages', title: '用量统计' },
+      { path: '/model-providers', title: '模型供应商', roles: ['viewer', 'model_admin'] },
+      { path: '/models', title: '模型注册', roles: ['viewer', 'model_admin'] },
+      { path: '/model-usages', title: '用量统计', roles: ['viewer', 'model_admin'] },
     ],
   },
   {
     title: '数据库管控',
     items: [
-      { path: '/database-instances', title: '数据库实例' },
-      { path: '/database-health', title: '健康检查' },
-      { path: '/database-backups', title: '备份记录' },
+      { path: '/database-instances', title: '数据库实例', roles: ['viewer', 'database_admin'] },
+      { path: '/database-health', title: '健康检查', roles: ['viewer', 'database_admin'] },
+      { path: '/database-backups', title: '备份记录', roles: ['viewer', 'database_admin'] },
     ],
   },
   {
     title: '平台管理',
     items: [
-      { path: '/wecom', title: '消息发送管理' },
-      { path: '/files', title: '附件管理' },
-      { path: '/system', title: '系统运行监控' },
+      { path: '/wecom', title: '消息发送管理', roles: ['admin'] },
+      { path: '/files', title: '附件管理', roles: ['admin'] },
+      { path: '/system', title: '系统运行监控', roles: ['viewer'] },
     ],
   },
 ]
 
 const route = useRoute()
+const auth = useAuthStore()
+
+const visibleMenuGroups = computed(() =>
+  menuGroups
+    .map((group) => ({ ...group, items: group.items.filter((item) => auth.canAccess(item.roles)) }))
+    .filter((group) => group.items.length > 0),
+)
+
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => (route.meta.title as string) || '')
 </script>

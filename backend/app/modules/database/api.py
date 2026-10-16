@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from app.core.auth import require_roles
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
 from app.core.security import mask_secret
@@ -10,7 +11,11 @@ from app.modules.database.models import DatabaseBackup, DatabaseHealth, Database
 from app.modules.database.schemas import BackupIn, InstanceIn, InstanceUpdate
 from app.modules.database.services import probe_instance
 
-router = APIRouter(prefix="/api/v1", tags=["database"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["database"],
+    dependencies=[Depends(require_roles("admin", "viewer", "database_admin"))],
+)
 
 
 def _serialize_instance(i: DatabaseInstance) -> dict:

@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     agent_offline_grace_seconds: int = 300
     model_check_timeout_seconds: int = 5
     database_check_timeout_seconds: int = 3
+    oidc_enabled: bool = False
+    oidc_issuer: str = ""
+    oidc_authorize_url: str = ""
+    oidc_token_url: str = ""
+    oidc_jwks_url: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = "http://localhost:5170/auth/callback"
+    oidc_audience: str = ""
+    oidc_roles_claim: str = "roles"
+    oidc_scopes: str = "openid profile"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 

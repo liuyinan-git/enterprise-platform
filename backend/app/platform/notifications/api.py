@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.auth import require_roles
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.security import mask_secret
@@ -8,7 +9,11 @@ from app.platform.notifications.schemas import WecomConfigIn, WecomTestIn
 from app.platform.notifications.service import get_or_create_config
 from app.platform.notifications.wecom import send_markdown
 
-router = APIRouter(prefix="/api/v1", tags=["notifications"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["notifications"],
+    dependencies=[Depends(require_roles("admin"))],
+)
 
 
 def _wecom_config_dict(cfg) -> dict:

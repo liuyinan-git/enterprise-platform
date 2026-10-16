@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from app.core.auth import require_roles
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
 from app.core.security import mask_secret
@@ -10,7 +11,11 @@ from app.modules.model.models import ModelProvider, ModelRegistry, ModelUsage
 from app.modules.model.schemas import ModelIn, ModelUpdate, ProviderIn, ProviderUpdate, UsageIn
 from app.modules.model.services import probe_provider
 
-router = APIRouter(prefix="/api/v1", tags=["model"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["model"],
+    dependencies=[Depends(require_roles("admin", "viewer", "model_admin"))],
+)
 
 
 def _serialize_provider(p: ModelProvider) -> dict:

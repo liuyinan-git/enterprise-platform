@@ -8,10 +8,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings
 from app.core.db import engine
 from app.modules.agent.api import router as agent_router
+from app.modules.agent.ingest_api import ingest_router as agent_ingest_router
 from app.modules.database.api import router as database_router
 from app.modules.log.api import router as log_router
+from app.modules.log.ingest_api import ingest_router as log_ingest_router
 from app.modules.model.api import router as model_router
 from app.platform.attachments.api import router as attachments_router
+from app.platform.auth.api import router as auth_router
 from app.platform.monitoring.api import router as monitoring_router
 from app.platform.notifications.api import router as notifications_router
 
@@ -65,6 +68,9 @@ def root():
 
 
 for _router in (
+    auth_router,
+    log_ingest_router,
+    agent_ingest_router,
     log_router,
     agent_router,
     model_router,

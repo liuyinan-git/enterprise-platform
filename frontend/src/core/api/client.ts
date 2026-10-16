@@ -1,9 +1,28 @@
 import axios from 'axios'
+import { clearAccessToken, getAccessToken } from '@/core/auth/oidc'
 
 const client = axios.create({
   baseURL: '/',
   timeout: 10000,
 })
+
+client.interceptors.request.use((config) => {
+  const token = getAccessToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+client.interceptors.response.use(
+  (resp) => resp,
+  (error) => {
+    if (error?.response?.status === 401) {
+      clearAccessToken()
+    }
+    return Promise.reject(error)
+  },
+)
 
 export interface ListResult<T> {
   items: T[]

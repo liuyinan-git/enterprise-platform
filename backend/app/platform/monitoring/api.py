@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser, get_current_user, require_roles
 from app.core.db import get_db
 from app.core.timeutil import local_now
 from app.modules.log.models import (
@@ -21,7 +22,10 @@ router = APIRouter(prefix="/api/v1", tags=["monitoring"])
 
 
 @router.get("/system/overview")
-def system_overview(db: Session = Depends(get_db)):
+def system_overview(
+    _: CurrentUser = Depends(require_roles("admin", "viewer")),
+    db: Session = Depends(get_db),
+):
     """管理端：系统运行监控统计（队列积压、解析失败、Worker 状态等）。"""
     raw_pending = db.scalar(select(func.count(LogRaw.id)).where(LogRaw.process_status == "pending")) or 0
     raw_failed = db.scalar(select(func.count(LogRaw.id)).where(LogRaw.process_status == "failed")) or 0
@@ -48,13 +52,19 @@ def system_overview(db: Session = Depends(get_db)):
 
 
 @router.post("/system/reset")
-def reset_system(db: Session = Depends(get_db)):
+def reset_system(
+    _: CurrentUser = Depends(require_roles("admin")),
+    db: Session = Depends(get_db),
+):
     """管理端：还原——清空日志、事件与告警（保留设备/规则/企业微信/附件）。"""
     return {"code": 0, "message": "success", "data": clear_all_logs(db)}
 
 
 @router.get("/dashboard/overview")
-def dashboard_overview(db: Session = Depends(get_db)):
+def dashboard_overview(
+    _: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """管理端：首页态势统计 + 近 7 日日志趋势。"""
     now = local_now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)

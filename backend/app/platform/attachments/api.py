@@ -7,11 +7,16 @@ from fastapi.responses import FileResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from app.core.auth import require_roles
 from app.core.config import settings
 from app.core.db import get_db
 from app.platform.attachments.models import Attachment
 
-router = APIRouter(prefix="/api/v1", tags=["attachments"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["attachments"],
+    dependencies=[Depends(require_roles("admin"))],
+)
 
 ALLOWED_EXTENSIONS: dict[str, set[str]] = {
     "document": {".txt", ".md", ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".rtf", ".log", ".json", ".xml", ".conf", ".yaml", ".yml", ".ini", ".cfg", ".toml"},
