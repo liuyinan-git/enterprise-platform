@@ -20,7 +20,7 @@
         <template #default="{ row }">{{ probeMethodLabel(row.probe_method) }}</template>
       </el-table-column>
       <el-table-column prop="engine" label="引擎" width="120" show-overflow-tooltip />
-      <el-table-column prop="provider_name" label="供应商" width="130" show-overflow-tooltip />
+      <el-table-column prop="provider_name" label="所属节点" width="130" show-overflow-tooltip />
       <el-table-column prop="version" label="版本" width="90" show-overflow-tooltip />
       <el-table-column prop="context_window" label="上下文" width="90" />
       <el-table-column label="健康状态" width="100">
@@ -76,7 +76,7 @@
       <el-form-item label="模型名" required>
         <el-input v-model="form.model_name" placeholder="如 deepseek-chat" />
       </el-form-item>
-      <el-form-item label="供应商" required>
+      <el-form-item label="所属节点" required>
         <el-select v-model="form.provider_code" style="width: 100%" :disabled="editing">
           <el-option v-for="p in providers" :key="p.provider_code" :label="p.provider_name" :value="p.provider_code" />
         </el-select>
@@ -302,7 +302,7 @@ function openEdit(row: ModelItem) {
 
 async function save() {
   if (!form.model_code || !form.model_name || !form.provider_code) {
-    ElMessage.warning('请填写模型编码、模型名和供应商')
+    ElMessage.warning('请填写模型编码、模型名和所属节点')
     return
   }
   saving.value = true

@@ -2,17 +2,17 @@
   <el-card>
     <template #header>
       <div class="card-header">
-        <span>模型供应商</span>
-        <el-button type="primary" @click="openCreate">新增供应商</el-button>
+        <span>部署节点（模型服务所在服务器）</span>
+        <el-button type="primary" @click="openCreate">新增节点</el-button>
       </div>
     </template>
 
     <el-table v-loading="loading" :data="items" border stripe style="width: 100%">
-      <el-table-column prop="provider_code" label="编码" min-width="130" show-overflow-tooltip />
-      <el-table-column prop="provider_name" label="名称" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="provider_type" label="类型" width="120" />
-      <el-table-column prop="base_url" label="接口地址" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="api_key_masked" label="密钥" width="120" />
+      <el-table-column prop="provider_code" label="节点编码" min-width="130" show-overflow-tooltip />
+      <el-table-column prop="provider_name" label="节点名称" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="provider_type" label="接口协议" width="120" />
+      <el-table-column prop="base_url" label="服务器地址" min-width="220" show-overflow-tooltip />
+      <el-table-column prop="api_key_masked" label="API 密钥" width="120" />
       <el-table-column label="启用" width="80">
         <template #default="{ row }">
           <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
@@ -38,23 +38,23 @@
     />
   </el-card>
 
-  <el-dialog v-model="dialogVisible" :title="editing ? '编辑供应商' : '新增供应商'" width="520px">
+  <el-dialog v-model="dialogVisible" :title="editing ? '编辑节点' : '新增节点'" width="520px">
     <el-form :model="form" label-width="110px">
-      <el-form-item label="编码" required>
+      <el-form-item label="节点编码" required>
         <el-input v-model="form.provider_code" :disabled="editing" />
       </el-form-item>
-      <el-form-item label="名称" required>
-        <el-input v-model="form.provider_name" />
+      <el-form-item label="节点名称" required>
+        <el-input v-model="form.provider_name" placeholder="如：内网GPU节点1（8×H20）" />
       </el-form-item>
-      <el-form-item label="类型">
+      <el-form-item label="接口协议">
         <el-select v-model="form.provider_type" style="width: 100%">
           <el-option v-for="t in providerTypes" :key="t" :label="t" :value="t" />
         </el-select>
       </el-form-item>
-      <el-form-item label="接口地址">
-        <el-input v-model="form.base_url" placeholder="https://api.deepseek.com/v1" />
+      <el-form-item label="服务器地址">
+        <el-input v-model="form.base_url" placeholder="如：http://172.28.110.11" />
       </el-form-item>
-      <el-form-item label="API Key">
+      <el-form-item label="API 密钥">
         <el-input v-model="form.api_key" type="password" show-password :placeholder="editing ? '留空或 **** 开头则不修改' : ''" />
       </el-form-item>
       <el-form-item label="启用">
@@ -125,7 +125,7 @@ function openEdit(row: ProviderItem) {
 
 async function save() {
   if (!form.provider_code || !form.provider_name) {
-    ElMessage.warning('请填写编码和名称')
+    ElMessage.warning('请填写节点编码和节点名称')
     return
   }
   saving.value = true
@@ -154,7 +154,7 @@ async function save() {
 }
 
 async function remove(row: ProviderItem) {
-  await ElMessageBox.confirm(`确定删除供应商「${row.provider_name || row.provider_code}」？`, '提示', {
+  await ElMessageBox.confirm(`确定删除节点「${row.provider_name || row.provider_code}」？`, '提示', {
     type: 'warning',
     confirmButtonText: '删除',
     cancelButtonText: '取消',
