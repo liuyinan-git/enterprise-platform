@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 200
     agent_offline_grace_seconds: int = 300
     model_check_timeout_seconds: int = 5
+    # vLLM 用量采集：/metrics 计数器指标名（不同 vLLM 版本命名可能不同，可按模型覆盖）
+    model_usage_metric: str = "vllm:request_success_total"
+    model_metrics_timeout_seconds: int = 10
+    # 模型服务告警：连续失败 N 次触发企业微信；恢复时发恢复通知
+    model_alert_enabled: bool = True
+    model_alert_failure_threshold: int = 3
+    model_alert_recovery_enabled: bool = True
+    # 容器实况：经 docker-socket-proxy 只读读取模型容器状态（model 模块只读不启停）。
+    # 生产（compose 内）默认地址 http://docker-proxy:2375；本地 mock 联调用 http://127.0.0.1:23750
+    model_container_enabled: bool = False
+    model_container_proxy_url: str = "http://docker-proxy:2375"
+    model_container_timeout_seconds: int = 3
     database_check_timeout_seconds: int = 3
     oidc_enabled: bool = False
     oidc_issuer: str = ""

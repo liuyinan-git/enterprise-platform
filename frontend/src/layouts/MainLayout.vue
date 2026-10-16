@@ -67,6 +67,8 @@ const menuGroups: { title: string; items: MenuItem[] }[] = [
     items: [
       { path: '/model-providers', title: '模型供应商', roles: ['viewer', 'model_admin'] },
       { path: '/models', title: '模型注册', roles: ['viewer', 'model_admin'] },
+      { path: '/models/consumers', title: '调用方台账', roles: ['viewer', 'model_admin'] },
+      { path: '/models/alerts', title: '模型告警', roles: ['viewer', 'model_admin'] },
       { path: '/model-usages', title: '用量统计', roles: ['viewer', 'model_admin'] },
     ],
   },

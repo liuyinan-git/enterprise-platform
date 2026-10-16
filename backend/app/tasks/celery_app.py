@@ -75,6 +75,16 @@ celery_app.conf.beat_schedule = {
         "task": "check_model_endpoints",
         "schedule": 60.0,
     },
+    # 周期拉取 vLLM /metrics，累计模型调用量
+    "collect-model-usage": {
+        "task": "collect_model_usage",
+        "schedule": 60.0,
+    },
+    # 周期重试发送失败的模型告警（含配置好后补发 pending）
+    "retry-model-alerts": {
+        "task": "retry_model_alerts",
+        "schedule": 30.0,
+    },
     # 周期探测数据库实例健康
     "check-database-health": {
         "task": "check_database_health",
