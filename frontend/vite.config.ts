@@ -11,10 +11,10 @@ export default defineConfig({
   },
   server: {
     host: true,
-    port: 5173,
+    port: 5170,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:7553', changeOrigin: true },
-      '/health': { target: 'http://127.0.0.1:7553', changeOrigin: true },
+      '/api': { target: 'http://127.0.0.1:7550', changeOrigin: true },
+      '/health': { target: 'http://127.0.0.1:7550', changeOrigin: true },
     },
   },
 })

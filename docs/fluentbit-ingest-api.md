@@ -122,7 +122,7 @@ device_id = {X-Source-Id} - {container_name 去掉前导 "/"}
     Name            http
     Match           *
     Host            <平台地址>
-    Port            <平台端口，本地 7553 / Docker 7552>
+    Port            <平台端口，本地 7550 / Docker 7550>
     URI             /api/v1/ingest/fluentbit
     Format          json_lines
     header          X-API-Key    <采集密钥>
@@ -138,7 +138,7 @@ device_id = {X-Source-Id} - {container_name 去掉前导 "/"}
 ### curl
 
 ```bash
-curl -X POST http://127.0.0.1:7553/api/v1/ingest/fluentbit \
+curl -X POST http://127.0.0.1:7550/api/v1/ingest/fluentbit \
   -H "Content-Type: application/json" \
   -H "X-API-Key: 123456" \
   -H "X-Source-Id: docker-01" \

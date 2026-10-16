@@ -3,8 +3,9 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
-from app.db.base import Base
-from app.models import log_models  # noqa: F401
+from app.core.db import Base
+import app.modules  # noqa: F401  导入各业务模块 models
+import app.platform  # noqa: F401  导入平台公共资源 models
 
 config = context.config
 if config.config_file_name is not None:

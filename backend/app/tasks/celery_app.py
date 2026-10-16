@@ -8,12 +8,13 @@
 from celery import Celery
 
 from app.core.config import settings
+from app.tasks.registry import TASK_MODULES
 
 celery_app = Celery(
     "enterprise_log",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.celery_tasks"],
+    include=TASK_MODULES,
 )
 
 celery_app.conf.update(
@@ -63,5 +64,20 @@ celery_app.conf.beat_schedule = {
     "rule-suggestions": {
         "task": "generate_rule_suggestions",
         "schedule": 3600.0,
+    },
+    # 周期检测智能体心跳超时
+    "check-agent-offline": {
+        "task": "check_agent_offline",
+        "schedule": 60.0,
+    },
+    # 周期探测模型端点健康
+    "check-model-endpoints": {
+        "task": "check_model_endpoints",
+        "schedule": 60.0,
+    },
+    # 周期探测数据库实例健康
+    "check-database-health": {
+        "task": "check_database_health",
+        "schedule": 60.0,
     },
 }

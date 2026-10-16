@@ -26,11 +26,11 @@
 
 ```bash
 # 生成 100 条样例日志并上报
-python sample_collector.py --base-url http://localhost:7553 \
+python sample_collector.py --base-url http://localhost:7550 \
     --api-key dev-local-collector-key --source collector01 --count 100
 
 # 只重发本地队列中未发送成功的数据（例如断网恢复后）
-python sample_collector.py --base-url http://localhost:7553 \
+python sample_collector.py --base-url http://localhost:7550 \
     --api-key dev-local-collector-key --source collector01 --flush-only
 ```
 

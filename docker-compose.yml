@@ -5,7 +5,7 @@ services:
     image: mysql:8.0
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-enterprise_log}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-enterprise_platform}
       MYSQL_USER: ${MYSQL_USER:-log_app}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-CHANGE_ME_STRONG_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-CHANGE_ME_ROOT_PASSWORD}
@@ -39,7 +39,7 @@ services:
     env_file:
       - .env
     ports:
-      - "7552:7552"
+      - "7550:7550"
     depends_on:
       mysql:
         condition: service_healthy

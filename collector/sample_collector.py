@@ -7,11 +7,11 @@
 3. 与平台接口约定对齐：X-API-Key 认证、POST /api/v1/logs/batch 批量上报。
 
 用法：
-  python sample_collector.py --base-url http://localhost:7553 \\
+  python sample_collector.py --base-url http://localhost:7550 \\
       --api-key dev-local-collector-key --source collector01 --count 100
 
 仅重发本地已缓存、未发送成功的队列：
-  python sample_collector.py --base-url http://localhost:7553 \\
+  python sample_collector.py --base-url http://localhost:7550 \\
       --api-key dev-local-collector-key --source collector01 --flush-only
 """
 
@@ -148,7 +148,7 @@ def flush(base_url: str, api_key: str, source_id: str, batch_size: int, path: Pa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="采集端样例程序")
-    parser.add_argument("--base-url", default="http://localhost:7553")
+    parser.add_argument("--base-url", default="http://localhost:7550")
     parser.add_argument("--api-key", required=True)
     parser.add_argument("--source", default="collector01")
     parser.add_argument("--count", type=int, default=100, help="生成的样例日志条数")

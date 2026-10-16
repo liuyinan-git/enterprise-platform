@@ -6,7 +6,7 @@
 
 ```bash
 npm install
-npm run dev      # 开发服务器（默认 http://localhost:5173，/api、/health 已代理到后端 7553）
+npm run dev      # 开发服务器（默认 http://localhost:5170，/api、/health 已代理到后端 7550）
 npm run build    # 生产构建
 ```
 

@@ -5,9 +5,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_env: str = "development"
-    app_port: int = 7552
+    app_port: int = 7550
     log_level: str = "INFO"
-    mysql_database: str = "enterprise_log"
+    mysql_database: str = "enterprise_platform"
     mysql_user: str = "log_app"
     mysql_password: str = "CHANGE_ME_app_password"
     mysql_host: str = "mysql"
@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     ai_wecom_min_risk: str = "suspicious"
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 200
+    agent_offline_grace_seconds: int = 300
+    model_check_timeout_seconds: int = 5
+    database_check_timeout_seconds: int = 3
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
