@@ -1,5 +1,6 @@
-# 编排：mysql + redis + api + worker + scheduler。
+# 编排：mysql + redis + docker-proxy + api + worker + scheduler。
 # frontend / nginx / ollama 在后续阶段逐步启用。
+# docker.sock 仅由 docker-proxy 挂载；api / worker / scheduler 都不挂。
 services:
   mysql:
     image: mysql:8.0
@@ -9,6 +10,10 @@ services:
       MYSQL_USER: ${MYSQL_USER:-log_app}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-CHANGE_ME_STRONG_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-CHANGE_ME_ROOT_PASSWORD}
+    ports:
+      # 只绑 127.0.0.1：供本地 uvicorn --reload 直连（backend/.env 的 MYSQL_HOST=localhost）。
+      # 不暴露到局域网；容器之间仍走服务名 mysql。端口被占用时用 MYSQL_HOST_PORT 覆盖。
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
@@ -33,6 +38,29 @@ services:
     networks:
       - backend_net
 
+  # 唯一挂载 docker.sock 的服务。api / worker / scheduler 都不挂，只经 backend_net 访问它。
+  # 代理自身没有鉴权，因此**不发布宿主机端口**，只在 backend_net 内以 docker-proxy:2375 可达。
+  # 注意：docker.sock 挂成 :ro 并不能阻止 API 写操作（socket 是套接字，不是普通文件），
+  # 真正的隔离来自下面这份白名单。
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2   # 固定版本，别用 :latest（注意 tag 带 v 前缀）
+    restart: unless-stopped
+    environment:
+      # 只开「容器」这一个 section 的读 + 启停；其余 section（IMAGES / EXEC / VOLUMES /
+      # NETWORKS / BUILD / SECRETS ...）一律保持默认的 0（拒绝）。
+      # 该镜像所有开关默认都是 0，即默认全拒。
+      CONTAINERS: "1"       # 容器列表 / 详情 / 日志
+      POST: "1"             # 非 GET 方法的总开关；不开则 start/stop/restart 一律 403
+      ALLOW_START: "1"
+      ALLOW_STOP: "1"
+      # 该开关同时放行 kill（代理无法只放行 restart），所以代理绝不能暴露到 backend_net 之外
+      ALLOW_RESTARTS: "1"
+      LOG_LEVEL: "warning"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - backend_net
+
   api:
     build: ./backend
     restart: unless-stopped
@@ -44,6 +72,8 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_started
+      docker-proxy:
         condition: service_started
     networks:
       - backend_net
@@ -61,6 +91,8 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_started
+      docker-proxy:
         condition: service_started
     networks:
       - backend_net

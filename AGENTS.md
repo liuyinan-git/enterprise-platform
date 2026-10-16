@@ -16,7 +16,7 @@
 - AI 研判（DeepSeek 大模型辅助分析，结构化输出）
 - 智能体管控（注册台账、心跳状态、操作审计）
 - 模型管控（供应商/模型台账、端点健康探测、用量统计）
-- 数据库管控（实例台账、连接健康探测、备份记录）
+- 数据库管控（实例台账、连接健康探测、备份记录、**容器实况与启停**）
 - 管理前端（Vue 3）：按模块分组的侧边栏 + 总览/日志/智能体/模型/数据库/平台管理页面
 
 **技术栈**
@@ -49,7 +49,7 @@ enterprise-platform/
 │   ├── alembic.ini
 │   ├── alembic/
 │   │   ├── env.py                # 读 settings.database_url + Base.metadata（import app.modules / app.platform）
-│   │   └── versions/             # 0001..0011 迁移
+│   │   └── versions/             # 0001..0012 迁移
 │   ├── app/
 │   │   ├── main.py               # FastAPI 入口：health/root + 聚合各模块 router
 │   │   ├── core/                 # 核心基础设施（无业务表）
@@ -68,6 +68,7 @@ enterprise-platform/
 │   │   │   ├── agent/            #   智能体管控：models/schemas/api/services/tasks
 │   │   │   ├── model/            #   模型管控：models/schemas/api/services/tasks
 │   │   │   └── database/         #   数据库管控：models/schemas/api/services/tasks
+│   │   │                         #     + 容器实况：docker_client/containers/container_api/container_config
 │   │   └── tasks/                # Celery 装配：celery_app.py + registry.py
 │   └── tests/                    # 测试（占位）
 ├── frontend/
@@ -105,6 +106,7 @@ enterprise-platform/
 | `database_check_timeout_seconds` | `3` | 数据库连接探测超时 |
 
 - `database_url` / `redis_url` 为派生属性；`get_settings()` 用 `@lru_cache` 缓存。
+- **例外：容器管控的配置不在这里**，而在 [modules/database/container_config.py](backend/app/modules/database/container_config.py)（读 `CONTAINER_*`）。因为本文件的 `Settings` 是 `extra="ignore"`，`.env` 里多出的键不会让它报错，模块自带一份 `BaseSettings` 读同一份 `.env` 即可——多人协作时新增配置不必改这个共享文件。
 
 ## 四、HTTP 端点（前缀 `/api/v1`）
 
@@ -161,6 +163,10 @@ enterprise-platform/
 | POST | `/database-instances/{code}/check` | 连接健康探测 |
 | GET | `/database-health` | 健康检查记录 |
 | GET/POST | `/database-backups` | 备份记录（自运维） |
+| GET | `/database-overview` | **台账 + 容器实况合并视图**（「数据库实例」页用） |
+| GET | `/database-containers`；`/database-containers/{id}`、`/logs`、`/exec-command` | 容器列表 / 详情 / 日志 / 可复制的 exec 命令（前端已撤掉「复制命令」按钮，接口保留待用） |
+| POST | `/database-containers/{id}/start`·`/stop`·`/restart` | 容器启停重启（需 `admin` 或 `database_container_admin`） |
+| GET | `/database-container-audits` | 容器操作审计 |
 
 ### 平台资源（platform/*，tag=notifications/attachments/monitoring）
 
@@ -174,12 +180,12 @@ enterprise-platform/
 ### 鉴权与响应格式
 
 - 采集接口通过 **`X-API-Key`** 鉴权（`require_collector_key`，`compare_digest` 防时序攻击）；未配置返回 503、不匹配返回 401。
-- 管理接口第一版内网开放无鉴权；生产用反向代理收紧。
+- 管理接口走 `Depends(require_roles(...))`；`OIDC_ENABLED=false`（当前默认）时降级为**匿名 admin**，即内网开放现状，开启 OIDC 后按 token 角色控制。**容器启停额外要求 `database_container_admin`**，`viewer` 只能看。
 - 统一响应 `{"code": 0, "message": "...", "data": ...}`（新模块用 `core/response.py` 的 `ok()/created()/paginated()`）。
 
 ## 五、数据模型
 
-共 **20 张表**，MySQL InnoDB，主键无符号 BIGINT 自增，时间列 `DATETIME(3)`。ORM 按模块拆分：
+共 **21 张表**，MySQL InnoDB，主键无符号 BIGINT 自增，时间列 `DATETIME(3)`。ORM 按模块拆分：
 
 | 模块 | 表 | 关键约束 |
 | ---- | ---- | ---- |
@@ -187,9 +193,9 @@ enterprise-platform/
 | platform（2 张） | `wecom_config`（单行 id=1）、`attachment` | — |
 | agent（2 张） | `agent_registry`（uk_agent_id）、`agent_audit` | 心跳 + 审计 |
 | model（3 张） | `model_provider`（uk_provider_code）、`model_registry`（uk_model_code + FK provider）、`model_usage`（uk model+day） | 供应商/模型/用量 |
-| database（3 张） | `database_instance`（uk_instance_code）、`database_health`、`database_backup` | 实例/健康/备份 |
+| database（4 张） | `database_instance`（uk_instance_code）、`database_health`、`database_backup`、`database_container_audit` | 实例/健康/备份/容器操作审计 |
 
-迁移脚本 `0001..0011`，其中 `0009_agent_module`、`0010_model_module`、`0011_database_module` 为新增模块表。
+迁移脚本 `0001..0012`，其中 `0009_agent_module`、`0010_model_module`、`0011_database_module`、`0012_database_container` 为新增模块表。
 
 ## 六、核心逻辑
 
@@ -213,6 +219,21 @@ enterprise-platform/
 
 `probe_instance()` 用 `socket.create_connection` 探测 host:port；`check_database_health` 周期任务（60s）刷新 `health_status` 并落 `database_health` 记录。`database_backup` 登记备份记录（自运维）。
 
+### 容器管控（modules/database/，与数据库台账同页合并）
+
+这是**全平台第一个能改变外部系统状态的能力**（其余模块都是台账 + 只读探测），所以读写守卫、自保护、审计三件事都做了。
+
+- [docker_client.py](backend/app/modules/database/docker_client.py)：只用标准库 `urllib` 访问 **docker-socket-proxy 白名单代理**（刻意不引入 docker SDK，与 `core/ai_client.py` 的零额外依赖一致）。含**日志多路复用解帧**（无 TTY 容器的 `/logs` 是 `[stream(1)][0,0,0][size(4,大端)]` 帧序列，不解帧会把 8 字节二进制头混进文本）。
+- [containers.py](backend/app/modules/database/containers.py)：类型识别 / 自保护 / 台账关联 / 序列化，规则集中一处。
+- [container_api.py](backend/app/modules/database/container_api.py)：容器接口。它被 [api.py](backend/app/modules/database/api.py) 的 router **include** 进来，所以 `main.py` 不需要改。
+- 合并视图 `GET /database-overview` 在 `api.py`（它是 `list_instances` 的超集）：每行台账带上 `container` + `container_link`，另返回 `unregistered`（不在台账、也未被任何台账行关联的容器）。`unregistered_scope` 默认 `managed`——**只列受管类型**，因为宿主机上跑的应用容器（kafka / 后端 / 前端……）不是纳管对象，全列出来会把真正要纳管的数据库淹掉；`all` 则连未分类的一起列。同时返回 `unregistered_hidden_unknown`（被滤掉几个）与 `unregistered_by_type`（各类型计数，供筛选下拉显示），**隐藏是可见的**。
+- **类型识别**：label `platform.type` 优先 → 镜像名正则 → 容器名正则 → `unknown`（前端显示「未分类」，只读）。未识别出类型的容器**不给**启停按钮。受管类型共 **19 种**，`MANAGED_TYPES` 一张表管全：关系型（postgres/mysql/mariadb/oracle/sqlserver）、缓存与文档图库（redis/memcached/mongodb/cassandra/neo4j）、搜索分析时序（elasticsearch/clickhouse/influxdb）、向量库（milvus/qdrant/weaviate/chroma）、知识库（weknora/cognee）。**加一个类型只需在 `containers.py` 的三张表（别名/镜像名/容器名）各加一行**，前端同步 `container-display.ts` 的 `MANAGED_TYPES`（仅用于渲染筛选下拉）。镜像名匹配刻意**不**把 `-` 当分隔符，否则 `mysql-backup-tool`、`mysql-exporter` 这类工具镜像会被判成数据库；容器名兜底也只收毫无歧义的写法。
+- **可见范围**：全部容器只读可见；只有识别出的类型且**非平台自身**的容器才开放生命周期操作。
+- **自保护**：命中 `platform.protected=true`，或 `com.docker.compose.project == CONTAINER_PROTECTED_PROJECT`（平台自身 compose 项目，无需人工打标）→ 服务端 **409** 拒绝，且在调用 Docker **之前**就拒绝。代理只能按 API section 放行、**无法按容器名限制**，所以这个应用层检查是唯一的逐容器防线。
+- **读写分离**：读接口由 router 级 `require_roles("admin","viewer","database_admin")` 覆盖；三个写接口**逐路由**再加 `require_roles("admin","database_container_admin")`。`database_container_admin` 刻意不复用 `database_admin`——台账编辑权与「重启宿主机数据库容器」的影响面差一个量级。
+- **降级**：Docker 不可达时列表类接口仍返回 **200 + `degraded: true`**（前端显示告警条，台账照常可用），日志与写接口返回 **503**。
+- **时间是坑**：Docker 的 `Created` 是 epoch UTC、`State.StartedAt` 是 RFC3339 UTC，都必须过 `parse_docker_time()` / `to_naive_local()` 归一，否则违反「全库 naive 北京时」约定。
+
 ### 异步调度（[tasks/celery_app.py](backend/app/tasks/celery_app.py) + [tasks/registry.py](backend/app/tasks/registry.py)）
 
 `registry.TASK_MODULES` 集中登记各模块 tasks；beat schedule 含 7 个日志任务 + 3 个新模块周期任务（`check_agent_offline` / `check_model_endpoints` / `check_database_health`，均 60s）。
@@ -224,7 +245,7 @@ enterprise-platform/
 ## 七、请求模型
 
 - [modules/log/schemas.py](backend/app/modules/log/schemas.py)：`LogItemIn`、`LogBatchIn`、`DeviceIn`、`RuleIn`、`RuleUpdate`、`EventPatch`。
-- 各新模块 `schemas.py`：`AgentIn/AgentUpdate`、`ProviderIn/ProviderUpdate`、`ModelIn/ModelUpdate`、`UsageIn`、`InstanceIn/InstanceUpdate`、`BackupIn`。
+- 各新模块 `schemas.py`：`AgentIn/AgentUpdate`、`ProviderIn/ProviderUpdate`、`ModelIn/ModelUpdate`、`UsageIn`、`InstanceIn/InstanceUpdate`、`BackupIn`、`ContainerActionIn`。
 
 ## 八、数据库会话（[core/db.py](backend/app/core/db.py)）
 
@@ -234,6 +255,8 @@ enterprise-platform/
 ## 九、启动与部署
 
 - **Docker Compose**：`cp .env.example .env` 后 `docker compose up -d`；api 容器启动先 `alembic upgrade head` 再 uvicorn。
+- **docker-socket-proxy**：compose 里的 `docker-proxy` 是**唯一**挂载 `docker.sock` 的服务（`api`/`worker`/`scheduler` 都不挂，只经 `backend_net` 访问 `docker-proxy:2375`）。该代理自身**无鉴权**，因此不发布宿主机端口。白名单开 `CONTAINERS` + `POST` + `ALLOW_START/STOP/RESTARTS`，其余 section 保持默认的 0（拒绝）。`docker.sock` 挂成 `:ro` 并不能阻止 API 写操作（socket 是套接字不是普通文件），隔离只来自这份白名单。
+- **前端容器配套**：`DatabaseInstances.vue` 每 30s 静默轮询一次（页面可见且无在途请求时才刷，`onUnmounted` 清理定时器）；这也是全站第一处轮询。
 - **后端本地**：`cd backend && cp .env.example .env`（改 `CHANGE_ME` 占位后）`&& uvicorn app.main:app --reload --port 7550`。
 - **前端本地**：`cd frontend && npm run dev`（Vite 5170，代理到 7550）。
 - **迁移**：`cd backend && alembic upgrade head`。
@@ -248,3 +271,6 @@ enterprise-platform/
 4. **企业微信 / AI 研判**：配置存 `wecom_config` 单行表；AI 客户端在 `core/ai_client.py`，AI 研判业务在 log 模块。
 5. **TypeScript 版本**：`frontend/package.json` 固定 `typescript@^5.9.3`。
 6. **附件存储目录**：`uploads/` 需挂载卷持久化。
+7. **⚠️ 容器管控上线前必须先开 OIDC**：`OIDC_ENABLED=false`（当前默认）时 `core/auth.py` 返回**匿名 admin**，即内网任何能访问 7550 的人都能启停宿主机的数据库容器。引入挂 `docker.sock` 类能力之前务必先接好 OIDC，并在 IdP 侧配置 `database_container_admin` 角色（未配置前实际只有 `admin` 可操作）。
+8. **受管容器的识别约定**：给容器打 `platform.type` 标签（取值见 `containers.py` 的 `MANAGED_TYPES`，共 19 种，含 postgres/mysql/mariadb/oracle/sqlserver/redis/mongodb/elasticsearch/clickhouse/milvus/qdrant/weknora/cognee 等），且 label 优先级最高、可覆盖镜像名推断；不打标则回退按镜像名、容器名推断。台账侧可用 `database_instance.attributes.docker_container`（容器名或 ID）显式指定关联的容器，否则按 `instance_code` 与容器名同名匹配。**注意 `platform.protected=true` 只能创建时打，容器标签创建后不可变**，无法事后给已在跑的容器补保护——要收窄范围只能靠开 OIDC 或防火墙。
+9. **容器操作审计**：所有启停（含被拒绝的）写 `database_container_audit`，可在前端「数据库实例」页的「操作记录」抽屉里看。容器清单本身**不落库**，始终实时读 Docker。

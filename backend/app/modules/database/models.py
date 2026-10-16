@@ -67,3 +67,26 @@ class DatabaseBackup(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
     result: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)"))
+
+
+class DatabaseContainerAudit(Base):
+    """容器操作审计：启停 / 重启的留痕（含被拒的操作）。
+
+    容器清单**实时读 Docker、不落库**（陈旧数据正是这个功能要避免的失败模式），
+    但「改变宿主状态的操作」必须留痕，与 `agent_audit` 的做法一致。
+    """
+    __tablename__ = "database_container_audit"
+    __table_args__ = (
+        Index("idx_db_container_audit_container", "container_id"),
+        Index("idx_db_container_audit_created", "created_at"),
+        {"mysql_engine": "InnoDB"},
+    )
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    container_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    container_name: Mapped[str] = mapped_column(String(200), nullable=False, server_default="")
+    managed_type: Mapped[str] = mapped_column(String(24), nullable=False, server_default="unknown")
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    result: Mapped[str] = mapped_column(String(24), nullable=False, server_default="success")
+    operator: Mapped[str | None] = mapped_column(String(100))
+    detail: Mapped[dict | list | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)"))

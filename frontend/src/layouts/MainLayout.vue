@@ -73,7 +73,8 @@ const menuGroups: { title: string; items: MenuItem[] }[] = [
   {
     title: '数据库管控',
     items: [
-      { path: '/database-instances', title: '数据库实例', roles: ['viewer', 'database_admin'] },
+      // 该页已合并「容器实况」，因此容器操作角色也要能进
+      { path: '/database-instances', title: '数据库实例', roles: ['viewer', 'database_admin', 'database_container_admin'] },
       { path: '/database-health', title: '健康检查', roles: ['viewer', 'database_admin'] },
       { path: '/database-backups', title: '备份记录', roles: ['viewer', 'database_admin'] },
     ],

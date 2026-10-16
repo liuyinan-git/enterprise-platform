@@ -7,6 +7,9 @@ from app.core.db import get_db
 from app.core.response import created, ok, paginated
 from app.core.security import mask_secret
 from app.core.timeutil import local_now
+from app.modules.database import containers as container_rules
+from app.modules.database import docker_client
+from app.modules.database.container_api import router as container_router
 from app.modules.database.models import DatabaseBackup, DatabaseHealth, DatabaseInstance
 from app.modules.database.schemas import BackupIn, InstanceIn, InstanceUpdate
 from app.modules.database.services import probe_instance
@@ -16,6 +19,11 @@ router = APIRouter(
     tags=["database"],
     dependencies=[Depends(require_roles("admin", "viewer", "database_admin"))],
 )
+
+# 容器实况接口并入本 router：因此改 main.py 的事情一件都不用做。
+# container_api 的路径写成 "/database-containers"，叠加本 router 的 "/api/v1" 前缀后
+# 对外即 "/api/v1/database-containers"。
+router.include_router(container_router)
 
 
 def _serialize_instance(i: DatabaseInstance) -> dict:
@@ -55,6 +63,93 @@ def list_instances(
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(stmt.order_by(DatabaseInstance.id).offset((page - 1) * page_size).limit(page_size)).all()
     return paginated([_serialize_instance(i) for i in rows], total, page, page_size)
+
+
+@router.get("/database-overview")
+def database_overview(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db_type: str | None = Query(default=None),
+    enabled: bool | None = Query(default=None),
+    include_protected: bool = Query(default=False),
+    unregistered_scope: str = Query(default="managed", pattern="^(managed|all)$"),
+    unregistered_type: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """台账 + 容器实况的合并视图（「数据库实例」页用）。
+
+    `unregistered_scope`：`managed`（默认）只列受管类型——宿主机上跑的应用容器
+    （kafka、后端、前端……）不是本平台的纳管对象，全列出来只会把真正要纳管的
+    数据库淹掉；`all` 则连未分类的一起列。
+
+    Docker 不可达时**不报错**：返回 200 + `degraded`，由页面显示告警条，
+    而不是整页红屏。
+    """
+    stmt = select(DatabaseInstance)
+    if db_type:
+        stmt = stmt.where(DatabaseInstance.db_type == db_type)
+    if enabled is not None:
+        stmt = stmt.where(DatabaseInstance.enabled.is_(enabled))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(stmt.order_by(DatabaseInstance.id).offset((page - 1) * page_size).limit(page_size)).all()
+
+    degraded, error = False, None
+    try:
+        live = [container_rules.serialize_container(c) for c in docker_client.list_containers()]
+    except docker_client.DockerUnavailable as exc:
+        live, degraded, error = [], True, str(exc)
+    index = container_rules.build_container_index(live)
+
+    # 「未登记」必须覆盖**全部**台账行而不只是当前页，否则第 2 页才关联上的容器
+    # 会被误报为未登记。
+    linked_ids: set[str] = set()
+    for code, attributes in db.execute(select(DatabaseInstance.instance_code, DatabaseInstance.attributes)).all():
+        hit, _ = container_rules.resolve_instance_container(code, attributes, index)
+        if hit:
+            linked_ids.add(hit["full_id"])
+    unregistered = [
+        c for c in live
+        if c["full_id"] not in linked_ids and (include_protected or not c["protected"])
+    ]
+    # 默认只留受管类型。被滤掉的数量一并返回，前端据此显示「另有 N 个未分类容器」，
+    # 让隐藏是**可见的**——静默省略会让人误以为宿主机上只有这几个容器。
+    hidden_unknown = 0
+    if unregistered_scope == "managed":
+        hidden_unknown = sum(1 for c in unregistered if c["managed_type"] == "unknown")
+        unregistered = [c for c in unregistered if c["managed_type"] != "unknown"]
+    # 按类型计数必须在**类型过滤之前**算，否则前端下拉里其他类型会显示成 0 并被禁用，
+    # 用户切过去就切不回来了。
+    by_type: dict[str, int] = {}
+    for c in unregistered:
+        by_type[c["managed_type"]] = by_type.get(c["managed_type"], 0) + 1
+    if unregistered_type:
+        unregistered = [c for c in unregistered if c["managed_type"] == unregistered_type]
+
+    items = []
+    for inst in rows:
+        payload = _serialize_instance(inst)
+        hit, source = container_rules.resolve_instance_container(inst.instance_code, inst.attributes, index)
+        payload["container"] = hit
+        payload["container_link"] = source
+        payload["refusal_reason"] = container_rules.refusal_reason(hit) if hit else "未找到对应容器"
+        items.append(payload)
+
+    return ok({
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "unregistered": unregistered,
+        "unregistered_total": len(unregistered),
+        # 被「只列受管类型」滤掉的未分类容器数（scope=all 时恒为 0）
+        "unregistered_hidden_unknown": hidden_unknown,
+        # 各类型的未登记数量（不含类型过滤，供下拉显示计数）
+        "unregistered_by_type": by_type,
+        "containers_total": len(live),
+        "degraded": degraded,
+        "error": error,
+        "generated_at": local_now().isoformat(),
+    })
 
 
 @router.post("/database-instances", status_code=status.HTTP_201_CREATED)

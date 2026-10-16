@@ -33,6 +33,12 @@ class InstanceUpdate(BaseModel):
     attributes: dict[str, Any] | list[Any] | None = None
 
 
+class ContainerActionIn(BaseModel):
+    """停止 / 重启的宽限期（秒）。不传则用 CONTAINER_STOP_GRACE_SECONDS。"""
+    model_config = ConfigDict(extra="forbid")
+    timeout: int | None = Field(default=None, ge=0, le=60)
+
+
 class BackupIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     instance_code: str = Field(min_length=1, max_length=100)
