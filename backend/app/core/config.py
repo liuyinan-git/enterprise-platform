@@ -56,17 +56,36 @@ class Settings(BaseSettings):
     model_container_proxy_url: str = "http://docker-proxy:2375"
     model_container_timeout_seconds: int = 3
     database_check_timeout_seconds: int = 3
-    oidc_enabled: bool = False
-    oidc_issuer: str = ""
-    oidc_authorize_url: str = ""
-    oidc_token_url: str = ""
-    oidc_jwks_url: str = ""
-    oidc_client_id: str = ""
-    oidc_client_secret: str = ""
-    oidc_redirect_uri: str = "http://localhost:5170/auth/callback"
-    oidc_audience: str = ""
-    oidc_roles_claim: str = "roles"
-    oidc_scopes: str = "openid profile"
+    # 网关统一认证（APISIX openid-connect + forward-auth 注入用户头）
+    gateway_auth_enabled: bool = False
+    gateway_user_id_header: str = "x-user-id"
+    gateway_username_header: str = "x-user-num"
+    gateway_roles_header: str = "x-user-roles"
+    # 网关模块数据库（3 套独立库，分布在不同服务器）
+    gateway_squid_db_host: str = "127.0.0.1"
+    gateway_squid_db_port: int = 3306
+    gateway_squid_db_user: str = "squid_writer"
+    gateway_squid_db_password: str = "your_password"
+    gateway_squid_db_database: str = "squid_log"
+    gateway_apisix_logs_db_host: str = "172.26.99.22"
+    gateway_apisix_logs_db_port: int = 3307
+    gateway_apisix_logs_db_user: str = "apisix_user"
+    gateway_apisix_logs_db_password: str = "apisix"
+    gateway_apisix_logs_db_database: str = "apisix_logs"
+    gateway_apisix_monitor_db_host: str = "127.0.0.1"
+    gateway_apisix_monitor_db_port: int = 3307
+    gateway_apisix_monitor_db_user: str = "apisix"
+    gateway_apisix_monitor_db_password: str = "apisix"
+    gateway_apisix_monitor_db_database: str = "apisix_monitor"
+    # 网关运行配置（Squid 容器 / 文件路径 / APISIX 节点）
+    gateway_squid_container: str = "squid-proxy"
+    gateway_squid_conf_path: str = "/ops/squid/squid.conf"
+    gateway_squid_details_dir: str = "/ops/squid/details"
+    gateway_squid_details_backup_dir: str = "/ops/squid_platform/squid_details_backup"
+    gateway_squid_conf_backup_dir: str = "/ops/squid_platform/squid_conf_backup"
+    gateway_squid_log_file: str = "/ops/squid/logs/access.log"
+    gateway_apisix_admin_key: str = ""
+    gateway_apisix_base_urls: str = ""  # 逗号分隔多个 APISIX 节点 base_url
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
@@ -82,6 +101,30 @@ class Settings(BaseSettings):
         if self.redis_password:
             return f"redis://:{quote_plus(self.redis_password)}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    def _mysql_url(self, user: str, password: str, host: str, port: int, database: str) -> str:
+        return (
+            f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}"
+            f"@{host}:{port}/{database}?charset=utf8mb4"
+        )
+
+    @property
+    def gateway_squid_db_url(self) -> str:
+        return self._mysql_url(self.gateway_squid_db_user, self.gateway_squid_db_password,
+                               self.gateway_squid_db_host, self.gateway_squid_db_port,
+                               self.gateway_squid_db_database)
+
+    @property
+    def gateway_apisix_logs_db_url(self) -> str:
+        return self._mysql_url(self.gateway_apisix_logs_db_user, self.gateway_apisix_logs_db_password,
+                               self.gateway_apisix_logs_db_host, self.gateway_apisix_logs_db_port,
+                               self.gateway_apisix_logs_db_database)
+
+    @property
+    def gateway_apisix_monitor_db_url(self) -> str:
+        return self._mysql_url(self.gateway_apisix_monitor_db_user, self.gateway_apisix_monitor_db_password,
+                               self.gateway_apisix_monitor_db_host, self.gateway_apisix_monitor_db_port,
+                               self.gateway_apisix_monitor_db_database)
 
 
 @lru_cache

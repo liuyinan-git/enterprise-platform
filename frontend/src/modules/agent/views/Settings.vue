@@ -78,8 +78,8 @@
       <h4 class="section">权限</h4>
       <el-descriptions :column="1" border size="small">
         <el-descriptions-item label="OIDC">
-          <el-tag :type="data.auth.oidc_enabled ? 'success' : 'warning'" size="small">
-            {{ data.auth.oidc_enabled ? '已开启' : '未开启（匿名 admin）' }}
+          <el-tag :type="data.auth.gateway_auth_enabled ? 'success' : 'warning'" size="small">
+            {{ data.auth.gateway_auth_enabled ? '已开启' : '未开启（匿名 admin）' }}
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="读接口角色">{{ data.auth.roles.read.join(' / ') }}</el-descriptions-item>

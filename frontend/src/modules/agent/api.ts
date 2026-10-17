@@ -148,7 +148,7 @@ export interface SystemStatusData {
   probe: { verify_tls: boolean; max_excerpt_chars: number }
   connections: { mysql: ConnectionStatus; redis: ConnectionStatus }
   auth: {
-    oidc_enabled: boolean
+    gateway_auth_enabled: boolean
     anonymous_admin: boolean
     roles: Record<string, string[]>
   }

@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends
 
-from app.core.auth import CurrentUser, get_current_user, get_oidc_config
+from app.core.auth import CurrentUser, get_auth_config, get_current_user
 
 router = APIRouter(prefix="/api/v1", tags=["auth"])
 
 
 @router.get("/auth/config")
 def auth_config():
-    """前端登录所需的公开 OIDC 配置（不含 client_secret）。"""
-    return {"code": 0, "message": "success", "data": get_oidc_config()}
+    """返回认证开关（网关统一认证由 APISIX 完成，前端只需知道是否启用）。"""
+    return {"code": 0, "message": "success", "data": get_auth_config()}
 
 
 @router.get("/auth/me")

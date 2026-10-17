@@ -95,6 +95,18 @@ const menuGroups: { title: string; items: MenuItem[] }[] = [
       { path: '/database-backups', title: '备份记录', roles: ['viewer', 'database_admin'] },
     ],
   },
+  // 网关管控暂不启用（后续需要再放开）
+  /*
+  {
+    title: '网关管控',
+    items: [
+      { path: '/gateway/squid', title: 'Squid 服务管理', roles: ['viewer', 'gateway_admin'] },
+      { path: '/gateway/squid-log', title: 'Squid 日志分析', roles: ['viewer', 'gateway_admin'] },
+      { path: '/gateway/apisix', title: 'APISIX 管理台', roles: ['viewer', 'gateway_admin'] },
+      { path: '/gateway/apisix-log', title: 'APISIX 日志分析', roles: ['viewer', 'gateway_admin'] },
+    ],
+  },
+  */
   {
     title: '平台管理',
     items: [

@@ -1,24 +1,17 @@
 import axios from 'axios'
-import { clearAccessToken, getAccessToken } from '@/core/auth/oidc'
 
 const client = axios.create({
   baseURL: '/',
   timeout: 10000,
 })
 
-client.interceptors.request.use((config) => {
-  const token = getAccessToken()
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
-
 client.interceptors.response.use(
   (resp) => resp,
   (error) => {
-    if (error?.response?.status === 401) {
-      clearAccessToken()
+    // 会话失效时刷新页面，让 APISIX 网关重定向到登录页
+    if (error?.response?.status === 401 && !sessionStorage.getItem('auth_reloading')) {
+      sessionStorage.setItem('auth_reloading', '1')
+      window.location.reload()
     }
     return Promise.reject(error)
   },

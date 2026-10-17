@@ -199,9 +199,9 @@ def get_system_status(db: Session = Depends(get_db)):
                 "redis": _check_redis(),
             },
             "auth": {
-                "oidc_enabled": settings.oidc_enabled,
-                # 未开 OIDC 时后端返回匿名 admin —— 与 AGENTS.md 第九条同一个告警
-                "anonymous_admin": not settings.oidc_enabled,
+                "gateway_auth_enabled": settings.gateway_auth_enabled,
+                # 未开网关认证时后端返回匿名 admin —— 与 AGENTS.md 第九条同一个告警
+                "anonymous_admin": not settings.gateway_auth_enabled,
                 "roles": {
                     "read": ["admin", "viewer", "agent_admin"],
                     "ledger_write": ["admin", "agent_admin"],

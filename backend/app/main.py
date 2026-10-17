@@ -10,6 +10,7 @@ from app.core.db import engine
 from app.modules.agent.api import router as agent_router
 from app.modules.agent.ingest_api import ingest_router as agent_ingest_router
 from app.modules.database.api import router as database_router
+from app.modules.gateway.api import router as gateway_router
 from app.modules.log.api import router as log_router
 from app.modules.log.ingest_api import ingest_router as log_ingest_router
 from app.modules.model.api import router as model_router
@@ -75,6 +76,7 @@ for _router in (
     agent_router,
     model_router,
     database_router,
+    gateway_router,
     notifications_router,
     attachments_router,
     monitoring_router,
