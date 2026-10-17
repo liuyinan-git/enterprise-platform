@@ -7,4 +7,4 @@ COPY alembic.ini /app/alembic.ini
 COPY alembic /app/alembic
 COPY app /app/app
 EXPOSE 7550
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 7550"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT:-7550}"]
