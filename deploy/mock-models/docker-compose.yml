@@ -1,0 +1,100 @@
+# 本地模拟联调栈（仅外网开发机使用，绝不部署到服务器）。
+# 起停：docker compose -f deploy/mock-models/docker-compose.yml up -d / down
+#
+# 组成：
+#   docker-proxy —— 只读白名单 Docker Engine API 代理（仅放行容器列表读，POST/启停默认全拒）。
+#                   供宿主机上的后端（uvicorn --reload）经 http://127.0.0.1:23750 读容器实况。
+#                   代理自身无鉴权，因此只绑 127.0.0.1 回环，绝不暴露局域网。
+#   5 个 mock 模型服务 —— 容器名与内网 172.28.110.11 完全一致（model_code = 容器名），
+#                   端口映射 = 10000 + 服务器端口（18033↔8033），台账里一眼对应。
+# 配套种子：database/seeds/model_services_mock.sql（把台账 endpoint 指到 127.0.0.1:1xxxx）
+# 后端配置：MODEL_CONTAINER_ENABLED=true + MODEL_CONTAINER_PROXY_URL=http://127.0.0.1:23750
+services:
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2   # 固定版本，别用 :latest
+    restart: unless-stopped
+    environment:
+      # 只放行「容器」section 的读；POST / ALLOW_START / ALLOW_STOP / ALLOW_RESTARTS
+      # 保持默认 0（全拒）—— model 模块只读，启停管控是 database 模块职责。
+      CONTAINERS: "1"
+      LOG_LEVEL: "warning"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "127.0.0.1:23750:2375"
+
+  # ---- 以下 5 个容器：容器名 = 内网真实容器名（= model_code），探测/容器实况自动匹配 ----
+
+  qwen3-embedding-4b:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: qwen3-embedding-4b
+    volumes:
+      - ./mock_service.py:/mock_service.py:ro
+    command: ["python", "/mock_service.py"]
+    environment:
+      ROLE: vllm
+      PORT: "18033"
+      MODEL_NAME: qwen3-embedding-4b
+      COUNTER_START: "163000"   # 对齐内网盘点基线（163k+ 次调用）
+      AUTO_QPM: "6"             # 高频服务：每分钟自动 +6，用量页可见持续增长
+    ports:
+      - "127.0.0.1:18033:18033"
+
+  qwen38-27b:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: qwen38-27b
+    volumes:
+      - ./mock_service.py:/mock_service.py:ro
+    command: ["python", "/mock_service.py"]
+    environment:
+      ROLE: vllm
+      PORT: "19101"
+      MODEL_NAME: qwen38-27b
+      COUNTER_START: "70"       # 低频服务（日均约 70 次）
+      AUTO_QPM: "1"
+    ports:
+      - "127.0.0.1:19101:19101"
+
+  bge-reranker-v2-m3:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: bge-reranker-v2-m3
+    volumes:
+      - ./mock_service.py:/mock_service.py:ro
+    command: ["python", "/mock_service.py"]
+    environment:
+      ROLE: vllm
+      PORT: "19104"
+      MODEL_NAME: bge-reranker-v2-m3
+      COUNTER_START: "2"        # 闲置：仅手动 curl /v1/models 时计数
+      AUTO_QPM: "0"
+    ports:
+      - "127.0.0.1:19104:19104"
+
+  voiceprint-api:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: voiceprint-api
+    volumes:
+      - ./mock_service.py:/mock_service.py:ro
+    command: ["python", "/mock_service.py"]
+    environment:
+      ROLE: tcp                  # WebSocket ASR：非标准协议，tcp 探活
+      PORT: "18765"
+    ports:
+      - "127.0.0.1:18765:18765"
+
+  paddleocr_vlm:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: paddleocr_vlm
+    volumes:
+      - ./mock_service.py:/mock_service.py:ro
+    command: ["python", "/mock_service.py"]
+    environment:
+      ROLE: http                 # OCR 视觉链路：任意 HTTP 响应即存活
+      PORT: "16021"
+    ports:
+      - "127.0.0.1:16021:16021"

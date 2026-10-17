@@ -18,9 +18,11 @@ dist/
 
 # --- 运行时产物 ---
 *.log
-celerybeat-schedule
-celerybeat-schedule-shm
-celerybeat-schedule-wal
+celerybeat-schedule*
+celerybeat.pid
+
+# --- AI 工作区 ---
+.trae/
 
 # --- 上传附件 ---
 backend/uploads/
