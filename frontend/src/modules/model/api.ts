@@ -8,6 +8,7 @@ export interface ProviderItem {
   provider_type: string
   base_url: string
   api_key_masked: string
+  container_proxy_url: string | null
   enabled: boolean
   created_at: string | null
   updated_at: string | null
@@ -19,6 +20,7 @@ export interface ProviderInput {
   provider_type?: string
   base_url?: string
   api_key?: string
+  container_proxy_url?: string
   enabled?: boolean
 }
 
@@ -50,6 +52,29 @@ export async function updateProvider(code: string, payload: Partial<ProviderInpu
 
 export async function deleteProvider(code: string): Promise<void> {
   await client.delete(`/api/v1/model-providers/${encodeURIComponent(code)}`)
+}
+
+export interface DiscoveredContainer {
+  name: string
+  image: string
+  state: string
+  status: string
+  ports: { private: number | null; public: number | null; type: string }[]
+  suggested: boolean
+}
+
+export interface DiscoverResult {
+  degraded: boolean
+  total: number
+  unregistered: number
+  containers: DiscoveredContainer[]
+}
+
+export async function discoverModels(code: string): Promise<DiscoverResult> {
+  const { data } = await client.post<{ code: number; message: string; data: DiscoverResult }>(
+    `/api/v1/model-providers/${encodeURIComponent(code)}/discover`,
+  )
+  return data.data
 }
 
 export interface ModelItem {
@@ -242,6 +267,28 @@ export async function updateModelConsumer(
 
 export async function deleteModelConsumer(code: string): Promise<void> {
   await client.delete(`/api/v1/model-consumers/${encodeURIComponent(code)}`)
+}
+
+export interface ConsumerUsageSummaryItem {
+  consumer_id: number
+  consumer_code: string | null
+  consumer_name: string | null
+  identity_type: string | null
+  call_count: number
+  error_count: number
+  success_rate: number
+  last_seen_at: string | null
+  model_codes: string[]
+}
+
+export async function listConsumerUsageSummary(
+  params: { consumer_code?: string; model_code?: string } = {},
+): Promise<ConsumerUsageSummaryItem[]> {
+  const { data } = await client.get<{ code: number; message: string; data: ConsumerUsageSummaryItem[] }>(
+    '/api/v1/model-consumer-usages',
+    { params: { ...params, rollup: 'consumer' } },
+  )
+  return data.data
 }
 
 export interface ModelAlertItem {

@@ -58,6 +58,9 @@ def _start_auto_increment() -> None:
 
 
 class _BaseHandler(BaseHTTPRequestHandler):
+    def address_string(self) -> str:  # 免 DNS 反查，直接返回客户端 IP（容器桥接网络下即调用方容器 IP）
+        return self.client_address[0]
+
     def _send(self, status: int, ctype: str, body: bytes) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
@@ -65,8 +68,10 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt: str, *args) -> None:  # 精简为单行日志，避免刷屏
-        print(f"{time.strftime('%H:%M:%S')} {self.address_string()} {fmt % args}", flush=True)
+    def log_message(self, fmt: str, *args) -> None:
+        # 输出 uvicorn 标准 access log 行，供后端 collect_model_callers 按
+        # `INFO: <ip>:<port> - "<METHOD /path HTTP/1.1" <status>` 解析 source_ip。
+        print(f"INFO:     {self.address_string()}:{self.client_address[1]} - {fmt % args}", flush=True)
 
 
 class _VllmHandler(_BaseHandler):
@@ -80,6 +85,19 @@ class _VllmHandler(_BaseHandler):
             self._send(200, "application/json", body)
         elif self.path == "/metrics":
             self._send(200, "text/plain; version=0.0.4; charset=utf-8", _metrics_text())
+        else:
+            self._send(404, "text/plain", b"not found")
+
+    def do_POST(self) -> None:
+        # 真实推理端点（/v1/* 一律 200 并计一次调用）—— 让调用方容器造的流量
+        # 同时反映到 access log（collect_model_callers）与 /metrics（collect_model_usage）。
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/v1/"):
+            _bump()
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
+            self._send(200, "application/json", b'{"object":"mock","choices":[]}')
         else:
             self._send(404, "text/plain", b"not found")
 

@@ -46,6 +46,18 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
+      <el-table-column label="近 7 日调用量" width="120" align="right">
+        <template #default="{ row }">
+          <span v-if="usageMap[row.consumer_code]" class="mono">{{ usageMap[row.consumer_code].call_count }}</span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="最后调用时间" width="170">
+        <template #default="{ row }">
+          <span v-if="usageMap[row.consumer_code]?.last_seen_at">{{ formatTime(usageMap[row.consumer_code].last_seen_at) }}</span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="负责人" min-width="110" show-overflow-tooltip>
         <template #default="{ row }">{{ row.contact || '—' }}</template>
       </el-table-column>
@@ -116,10 +128,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createModelConsumer,
   deleteModelConsumer,
+  listConsumerUsageSummary,
   listModelConsumers,
   listModels,
   updateModelConsumer,
   type ConsumerItem,
+  type ConsumerUsageSummaryItem,
   type ModelItem,
 } from '@/modules/model/api'
 
@@ -153,6 +167,7 @@ const dialogVisible = ref(false)
 const saving = ref(false)
 const editing = ref(false)
 const filters = reactive({ identity_type: '', model_code: '' })
+const usageMap = ref<Record<string, ConsumerUsageSummaryItem>>({})
 
 const form = reactive({
   consumer_code: '',
@@ -184,6 +199,24 @@ async function load() {
 async function loadModels() {
   const result = await listModels({ page_size: 200 })
   models.value = result.items
+}
+
+function formatTime(v: string | null | undefined) {
+  if (!v) return '—'
+  return v.replace('T', ' ').slice(0, 19)
+}
+
+async function loadUsageSummary() {
+  try {
+    const summary = await listConsumerUsageSummary()
+    const map: Record<string, ConsumerUsageSummaryItem> = {}
+    for (const s of summary) {
+      if (s.consumer_code) map[s.consumer_code] = s
+    }
+    usageMap.value = map
+  } catch {
+    // 用量统计查询失败不阻塞台账展示（监控数据缺失时列显示 —）
+  }
 }
 
 function search() {
@@ -278,6 +311,7 @@ async function remove(row: ConsumerItem) {
 onMounted(() => {
   load()
   loadModels()
+  loadUsageSummary()
 })
 </script>
 

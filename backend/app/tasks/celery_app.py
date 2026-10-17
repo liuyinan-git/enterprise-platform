@@ -80,6 +80,11 @@ celery_app.conf.beat_schedule = {
         "task": "collect_model_usage",
         "schedule": 60.0,
     },
+    # 周期读模型容器 access log，采集「谁在调哪个模型」调用量
+    "collect-model-callers": {
+        "task": "collect_model_callers",
+        "schedule": 120.0,
+    },
     # 周期重试发送失败的模型告警（含配置好后补发 pending）
     "retry-model-alerts": {
         "task": "retry_model_alerts",

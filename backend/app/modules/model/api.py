@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
@@ -11,6 +13,7 @@ from app.modules.model.models import (
     ModelAlert,
     ModelConsumer,
     ModelConsumerRel,
+    ModelConsumerUsage,
     ModelHealth,
     ModelProvider,
     ModelRegistry,
@@ -27,7 +30,11 @@ from app.modules.model.schemas import (
 )
 from app.modules.model.services import probe_model
 from app.modules.model.services.alerting import _send_model_alert, process_probe_result
-from app.modules.model.services.container_live import annotate_failure, container_snapshot
+from app.modules.model.services.container_live import (
+    annotate_failure,
+    container_snapshot,
+    discover_containers,
+)
 
 router = APIRouter(
     prefix="/api/v1",
@@ -44,6 +51,7 @@ def _serialize_provider(p: ModelProvider) -> dict:
         "provider_type": p.provider_type,
         "base_url": p.base_url,
         "api_key_masked": mask_secret(p.api_key),
+        "container_proxy_url": p.container_proxy_url,
         "enabled": p.enabled,
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
@@ -73,10 +81,24 @@ def _serialize_model(m: ModelRegistry, provider_code: str | None = None, provide
     }
 
 
-def _attach_container_status(items: list[dict]) -> None:
-    """就地合并容器实况字段（一次快照；代理未启用/不可达时全为 None → 前端显示 unknown）。"""
-    snap = container_snapshot()
+def _provider_proxy(provider: ModelProvider | None) -> str | None:
+    """节点级容器 proxy 覆盖：provider 上配了就返回，否则 None（调用方回退全局默认）。"""
+    if provider and provider.container_proxy_url and provider.container_proxy_url.strip():
+        return provider.container_proxy_url.strip()
+    return None
+
+
+def _attach_container_status(items: list[dict], providers: dict[int, ModelProvider]) -> None:
+    """就地合并容器实况字段。多节点时按各模型所属节点的 proxy 分别快照（缓存去重）；
+    代理未启用/不可达时全为 None → 前端显示 unknown。"""
+    snap_cache: dict[str, dict] = {}
     for item in items:
+        provider = providers.get(item.get("provider_id"))
+        proxy = _provider_proxy(provider)
+        key = proxy or ""
+        if key not in snap_cache:
+            snap_cache[key] = container_snapshot(proxy)
+        snap = snap_cache[key]
         info = snap.get(item.get("model_code") or "")
         item["container_status"] = info.get("container_status") if info else None
         item["container_status_text"] = info.get("container_status_text") if info else None
@@ -107,6 +129,7 @@ def create_provider(payload: ProviderIn, db: Session = Depends(get_db)):
         provider_type=payload.provider_type,
         base_url=payload.base_url,
         api_key=payload.api_key,
+        container_proxy_url=payload.container_proxy_url,
         enabled=payload.enabled,
     )
     db.add(provider)
@@ -128,7 +151,7 @@ def update_provider(code: str, payload: ProviderUpdate, db: Session = Depends(ge
     provider = db.scalar(select(ModelProvider).where(ModelProvider.provider_code == code))
     if provider is None:
         raise HTTPException(status_code=404, detail="供应商不存在")
-    for field in ("provider_name", "provider_type", "base_url", "enabled"):
+    for field in ("provider_name", "provider_type", "base_url", "container_proxy_url", "enabled"):
         value = getattr(payload, field)
         if value is not None:
             setattr(provider, field, value)
@@ -154,6 +177,29 @@ def delete_provider(code: str, db: Session = Depends(get_db)):
     return ok({"provider_code": code}, message="deleted")
 
 
+@router.post("/model-providers/{code}/discover", dependencies=[Depends(require_permission("model:manage"))])
+def discover_models(code: str, db: Session = Depends(get_db)):
+    """扫描该节点 docker-proxy 可见的容器，列出尚未登记为模型的容器（供「发现模型」纳管）。
+
+    返回 degraded=true 表示代理未启用/不可达；容器按 suggested 降序排列（疑似模型排前）。
+    """
+    provider = db.scalar(select(ModelProvider).where(ModelProvider.provider_code == code))
+    if provider is None:
+        raise HTTPException(status_code=404, detail="供应商不存在")
+    containers = discover_containers(provider.container_proxy_url)
+    if containers is None:
+        return ok({"degraded": True, "total": 0, "unregistered": 0, "containers": []})
+    registered = set(db.scalars(select(ModelRegistry.model_code)).all())
+    unregistered = [c for c in containers if c["name"] not in registered]
+    unregistered.sort(key=lambda c: (not c["suggested"], c["name"]))
+    return ok({
+        "degraded": False,
+        "total": len(containers),
+        "unregistered": len(unregistered),
+        "containers": unregistered,
+    })
+
+
 @router.get("/models")
 def list_models(
     page: int = Query(1, ge=1),
@@ -174,7 +220,7 @@ def list_models(
     providers = {p.id: p for p in db.scalars(select(ModelProvider)).all()}
     items = [_serialize_model(m, providers[m.provider_id].provider_code if m.provider_id in providers else None,
                               providers[m.provider_id].provider_name if m.provider_id in providers else None) for m in rows]
-    _attach_container_status(items)
+    _attach_container_status(items, providers)
     return paginated(items, total, page, page_size)
 
 
@@ -212,7 +258,7 @@ def get_model(code: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="模型不存在")
     provider = db.get(ModelProvider, model.provider_id)
     item = _serialize_model(model, provider.provider_code if provider else None, provider.provider_name if provider else None)
-    _attach_container_status([item])
+    _attach_container_status([item], {provider.id: provider} if provider else {})
     return ok(item)
 
 
@@ -239,8 +285,8 @@ def delete_model(code: str, db: Session = Depends(get_db)):
     model = db.scalar(select(ModelRegistry).where(ModelRegistry.model_code == code))
     if model is None:
         raise HTTPException(status_code=404, detail="模型不存在")
-    # 先清子表引用（health/usage/consumer_rel/alert 均有 FK，直接删主行会被外键约束拒绝）
-    for child in (ModelHealth, ModelUsage, ModelConsumerRel, ModelAlert):
+    # 先清子表引用（health/usage/consumer_rel/consumer_usage/alert 均有 FK，直接删主行会被外键约束拒绝）
+    for child in (ModelHealth, ModelUsage, ModelConsumerRel, ModelConsumerUsage, ModelAlert):
         db.query(child).filter(child.model_id == model.id).delete()
     db.delete(model)
     db.commit()
@@ -256,7 +302,7 @@ def check_model(code: str, db: Session = Depends(get_db)):
     provider = db.get(ModelProvider, model.provider_id)
     ok_flag, latency_ms, message = probe_model(model, provider)
     if not ok_flag:  # 失败时标注容器状态（容器挂了 vs 服务无响应），告警内容同步受益
-        message = annotate_failure(message or "", model.model_code, container_snapshot())
+        message = annotate_failure(message or "", model.model_code, container_snapshot(_provider_proxy(provider)))
     action = process_probe_result(db, model, ok_flag, message or "")
     if model.probe_method == "none":
         model.health_status = "unknown"
@@ -479,9 +525,124 @@ def delete_consumer(code: str, db: Session = Depends(get_db)):
     if consumer is None:
         raise HTTPException(status_code=404, detail="调用方不存在")
     db.query(ModelConsumerRel).filter(ModelConsumerRel.consumer_id == consumer.id).delete()
+    db.query(ModelConsumerUsage).filter(ModelConsumerUsage.consumer_id == consumer.id).delete()
     db.delete(consumer)
     db.commit()
     return ok({"consumer_code": code}, message="deleted")
+
+
+@router.get("/model-consumer-usages")
+def list_consumer_usages(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    consumer_code: str | None = Query(default=None),
+    model_code: str | None = Query(default=None),
+    recorded_day: str | None = Query(default=None),
+    rollup: str | None = Query(default=None, description="consumer=按调用方聚合近 7 日（返回非分页列表）"),
+    db: Session = Depends(get_db),
+):
+    """调用方 × 模型 的调用量统计（从模型容器 access log 采集，逐天聚合）。
+
+    默认返回逐 (调用方, 模型, 天) 明细行；rollup=consumer 时按调用方聚合近 7 日，
+    返回每个调用方的总调用量 / 错误数 / 成功率 / 最后调用时间 / 实际调用的模型集合。
+    """
+    if rollup == "consumer":
+        return _consumer_usage_rollup(db, consumer_code, model_code)
+    stmt = select(ModelConsumerUsage)
+    if consumer_code:
+        stmt = stmt.join(ModelConsumer, ModelConsumer.id == ModelConsumerUsage.consumer_id).where(
+            ModelConsumer.consumer_code == consumer_code
+        )
+    if model_code:
+        stmt = stmt.join(ModelRegistry, ModelRegistry.id == ModelConsumerUsage.model_id).where(
+            ModelRegistry.model_code == model_code
+        )
+    if recorded_day:
+        stmt = stmt.where(ModelConsumerUsage.recorded_day == recorded_day)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(
+        stmt.order_by(desc(ModelConsumerUsage.last_seen_at))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    consumers = {c.id: c for c in db.scalars(select(ModelConsumer)).all()}
+    models = {m.id: m for m in db.scalars(select(ModelRegistry)).all()}
+    items = []
+    for u in rows:
+        c = consumers.get(u.consumer_id)
+        m = models.get(u.model_id)
+        calls = u.call_count or 0
+        errors = u.error_count or 0
+        success_rate = round((calls - errors) / calls * 100, 1) if calls else 0.0
+        items.append(
+            {
+                "id": u.id,
+                "consumer_id": u.consumer_id,
+                "consumer_code": c.consumer_code if c else None,
+                "consumer_name": c.consumer_name if c else None,
+                "identity_type": c.identity_type if c else None,
+                "model_id": u.model_id,
+                "model_code": m.model_code if m else None,
+                "model_name": m.model_name if m else None,
+                "service_type": m.service_type if m else None,
+                "recorded_day": u.recorded_day,
+                "call_count": calls,
+                "error_count": errors,
+                "success_rate": success_rate,
+                "last_seen_at": u.last_seen_at.isoformat() if u.last_seen_at else None,
+            }
+        )
+    return paginated(items, total, page, page_size)
+
+
+def _consumer_usage_rollup(db: Session, consumer_code: str | None, model_code: str | None):
+    """近 7 日按调用方聚合（非分页）。7 天窗口内 (consumer, model, day) 行数有限，Python 聚合即可。"""
+    since_day = (local_now().date() - timedelta(days=6)).isoformat()
+    stmt = select(ModelConsumerUsage).where(ModelConsumerUsage.recorded_day >= since_day)
+    if consumer_code:
+        stmt = stmt.join(ModelConsumer, ModelConsumer.id == ModelConsumerUsage.consumer_id).where(
+            ModelConsumer.consumer_code == consumer_code
+        )
+    if model_code:
+        stmt = stmt.join(ModelRegistry, ModelRegistry.id == ModelConsumerUsage.model_id).where(
+            ModelRegistry.model_code == model_code
+        )
+    rows = db.scalars(stmt).all()
+    consumers = {c.id: c for c in db.scalars(select(ModelConsumer)).all()}
+    models = {m.id: m for m in db.scalars(select(ModelRegistry)).all()}
+    agg: dict[int, dict] = {}
+    for u in rows:
+        a = agg.setdefault(
+            u.consumer_id,
+            {"call_count": 0, "error_count": 0, "last_seen_at": None, "model_codes": set()},
+        )
+        a["call_count"] += u.call_count or 0
+        a["error_count"] += u.error_count or 0
+        if u.last_seen_at and (a["last_seen_at"] is None or u.last_seen_at > a["last_seen_at"]):
+            a["last_seen_at"] = u.last_seen_at
+        m = models.get(u.model_id)
+        if m:
+            a["model_codes"].add(m.model_code)
+    items = []
+    for cid, a in agg.items():
+        c = consumers.get(cid)
+        calls = a["call_count"]
+        errors = a["error_count"]
+        items.append(
+            {
+                "consumer_id": cid,
+                "consumer_code": c.consumer_code if c else None,
+                "consumer_name": c.consumer_name if c else None,
+                "identity_type": c.identity_type if c else None,
+                "call_count": calls,
+                "error_count": errors,
+                "success_rate": round((calls - errors) / calls * 100, 1) if calls else 0.0,
+                "last_seen_at": a["last_seen_at"].isoformat() if a["last_seen_at"] else None,
+                "model_codes": sorted(a["model_codes"]),
+            }
+        )
+    items.sort(key=lambda x: x["last_seen_at"] or "", reverse=True)
+    return ok(items)
 
 
 # ===== 模型告警 =====

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     model_container_enabled: bool = False
     model_container_proxy_url: str = "http://docker-proxy:2375"
     model_container_timeout_seconds: int = 3
+    # 调用方监控：读模型容器 stdout 的 access log（uvicorn 格式），按 source_ip 聚合「谁在调模型」。
+    # tail = 每周期读日志行数上限；max_chars = 单次日志文本字符上限（对齐 AGENT_LOG_* 语义）
+    model_access_log_tail: int = 500
+    model_access_log_max_chars: int = 262144
     database_check_timeout_seconds: int = 3
     # 网关统一认证（APISIX openid-connect + forward-auth 注入用户头）
     gateway_auth_enabled: bool = False

@@ -98,3 +98,61 @@ services:
       PORT: "16021"
     ports:
       - "127.0.0.1:16021:16021"
+
+  # ---- 调用方容器：周期向 mock 模型发推理请求，制造 access log 流量 ----
+  # 容器名 = 调用方台账的 identifier（container 型），source_ip 反查据此命中。
+  # 与模型容器同在默认网络 mock-models_default，模型看到的 source_ip 就是调用方容器 IP。
+
+  question-bank:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: question-bank
+    volumes:
+      - ./mock_caller.py:/mock_caller.py:ro
+    command: ["python", "/mock_caller.py"]
+    environment:
+      TARGETS: "qwen3-embedding-4b:18033:/v1/embeddings"
+      INTERVAL: "5"
+    depends_on:
+      - qwen3-embedding-4b
+
+  cognee-backend:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: cognee-backend
+    volumes:
+      - ./mock_caller.py:/mock_caller.py:ro
+    command: ["python", "/mock_caller.py"]
+    environment:
+      TARGETS: "qwen38-27b:19101:/v1/chat/completions,bge-reranker-v2-m3:19104:/v1/embeddings"
+      INTERVAL: "8"
+    depends_on:
+      - qwen38-27b
+      - bge-reranker-v2-m3
+
+  memory-api-test:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: memory-api-test
+    volumes:
+      - ./mock_caller.py:/mock_caller.py:ro
+    command: ["python", "/mock_caller.py"]
+    environment:
+      TARGETS: "qwen38-27b:19101:/v1/chat/completions"
+      INTERVAL: "12"
+    depends_on:
+      - qwen38-27b
+
+  cognee-digitalhuman:
+    image: python:3.12-slim
+    restart: unless-stopped
+    container_name: cognee-digitalhuman
+    volumes:
+      - ./mock_caller.py:/mock_caller.py:ro
+    command: ["python", "/mock_caller.py"]
+    environment:
+      TARGETS: "qwen3-embedding-4b:18033:/v1/embeddings,qwen38-27b:19101:/v1/chat/completions"
+      INTERVAL: "7"
+    depends_on:
+      - qwen3-embedding-4b
+      - qwen38-27b

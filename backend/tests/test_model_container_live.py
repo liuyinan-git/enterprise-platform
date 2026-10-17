@@ -21,7 +21,7 @@ def _enable(monkeypatch):
 
 def test_snapshot_indexes_by_name(monkeypatch):
     _enable(monkeypatch)
-    monkeypatch.setattr(container_live, "_list_containers", lambda: _fake_list())
+    monkeypatch.setattr(container_live, "_list_containers", lambda *a, **k: _fake_list())
     snap = container_live.container_snapshot()
     assert snap["qwen3-embedding-4b"]["container_status"] == "running"
     assert snap["qwen3-embedding-4b"]["container_status_text"] == "Up 2 hours"
@@ -36,7 +36,7 @@ def test_snapshot_disabled_returns_empty(monkeypatch):
 def test_snapshot_proxy_down_returns_empty(monkeypatch):
     """代理不可达 → 空快照（降级 unknown），不抛异常。"""
     _enable(monkeypatch)
-    monkeypatch.setattr(container_live, "_list_containers", lambda: None)
+    monkeypatch.setattr(container_live, "_list_containers", lambda *a, **k: None)
     assert container_live.container_snapshot() == {}
 
 
@@ -88,7 +88,7 @@ def test_non_list_response_returns_none(monkeypatch):
 def test_annotate_exited(monkeypatch):
     """容器已停 → 标注容器状态（一眼分清容器挂了）。"""
     _enable(monkeypatch)
-    monkeypatch.setattr(container_live, "_list_containers", lambda: _fake_list())
+    monkeypatch.setattr(container_live, "_list_containers", lambda *a, **k: _fake_list())
     snap = container_live.container_snapshot()
     assert container_live.annotate_failure("timeout", "qwen38-27b", snap) == "timeout（容器 exited）"
 
@@ -96,7 +96,7 @@ def test_annotate_exited(monkeypatch):
 def test_annotate_running_means_service_stuck(monkeypatch):
     """容器在跑但探测失败 → 服务无响应（区别于容器故障）。"""
     _enable(monkeypatch)
-    monkeypatch.setattr(container_live, "_list_containers", lambda: _fake_list())
+    monkeypatch.setattr(container_live, "_list_containers", lambda *a, **k: _fake_list())
     snap = container_live.container_snapshot()
     assert (
         container_live.annotate_failure("HTTP 500", "qwen3-embedding-4b", snap)

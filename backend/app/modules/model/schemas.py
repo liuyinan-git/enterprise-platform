@@ -10,6 +10,7 @@ class ProviderIn(BaseModel):
     provider_type: str = Field(default="openai", max_length=50)
     base_url: str = Field(default="", max_length=500)
     api_key: str = Field(default="", max_length=500)
+    container_proxy_url: str | None = Field(default=None, max_length=500)
     enabled: bool = True
 
 
@@ -19,6 +20,7 @@ class ProviderUpdate(BaseModel):
     provider_type: str | None = Field(default=None, max_length=50)
     base_url: str | None = Field(default=None, max_length=500)
     api_key: str | None = Field(default=None, max_length=500)
+    container_proxy_url: str | None = Field(default=None, max_length=500)
     enabled: bool | None = None
 
 

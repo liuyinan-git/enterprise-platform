@@ -20,6 +20,9 @@ class ModelProvider(Base):
     provider_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="openai")
     base_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     api_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
+    # 该节点（服务器）的 docker-socket-proxy 地址：跨服务器读容器实况/日志时按此覆盖全局默认；
+    # 空/NULL → 回退 settings.model_container_proxy_url（同机场景）。
+    container_proxy_url: Mapped[str | None] = mapped_column(String(500))
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)"))
     updated_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"))
@@ -56,6 +59,8 @@ class ModelRegistry(Base):
     # /metrics 用量采集：上次计数器值（差值计算）；metrics_metric 可按模型覆盖全局默认指标名
     last_metrics_value: Mapped[int | None] = mapped_column(BIGINT(unsigned=True))
     metrics_metric: Mapped[str | None] = mapped_column(String(200))
+    # access log 采集游标：上次读取日志的 epoch 秒，下次只读 since=该值 之后的新日志（避免重复累加）
+    last_log_cursor: Mapped[int | None] = mapped_column(BIGINT(unsigned=True))
     # 告警状态机：连续探测失败计数（恢复清零），达到阈值触发企业微信告警
     consecutive_failures: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)"))
@@ -131,6 +136,33 @@ class ModelConsumerRel(Base):
     consumer_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), ForeignKey("model_consumer.id"), nullable=False)
     model_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), ForeignKey("model_registry.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)"))
+
+
+class ModelConsumerUsage(Base):
+    """调用方 × 模型 × 天 的调用量统计（从模型容器 access log 采集）。
+
+    - 数据源：模型容器 stdout 的 access log（uvicorn 格式），经 docker-socket-proxy
+      读取后按 (source_ip → 调用方, 模型, 状态码) 聚合。只统计真实推理请求
+      （POST /v1/chat/completions 等），排除平台自探测（GET /v1/models /metrics）。
+    - call_count = 当日累计调用次数；error_count = 非 2xx 状态码次数。
+    - 唯一键 (consumer_id, model_id, recorded_day)，跨周期 upsert 累加。
+    """
+    __tablename__ = "model_consumer_usage"
+    __table_args__ = (
+        UniqueConstraint("consumer_id", "model_id", "recorded_day", name="uk_consumer_model_day"),
+        Index("idx_cusage_model", "model_id"),
+        Index("idx_cusage_seen", "last_seen_at"),
+        {"mysql_engine": "InnoDB"},
+    )
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    consumer_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), ForeignKey("model_consumer.id"), nullable=False)
+    model_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), ForeignKey("model_registry.id"), nullable=False)
+    recorded_day: Mapped[str] = mapped_column(String(10), nullable=False)
+    call_count: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default="0")
+    error_count: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default="0")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
+    created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)"))
+    updated_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"))
 
 
 class ModelAlert(Base):
