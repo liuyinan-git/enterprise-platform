@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_roles
+from app.core.auth import require_permission
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.timeutil import local_now
@@ -28,7 +28,7 @@ from app.platform.notifications.wecom import send_markdown
 router = APIRouter(
     prefix="/api/v1",
     tags=["log"],
-    dependencies=[Depends(require_roles("admin", "viewer", "log_admin"))],
+    dependencies=[Depends(require_permission("log:view"))],
 )
 
 
@@ -357,7 +357,7 @@ def get_event(
     return {"code": 0, "message": "success", "data": data}
 
 
-@router.patch("/events/{event_no}")
+@router.patch("/events/{event_no}", dependencies=[Depends(require_permission("log:manage"))])
 def patch_event(
     event_no: str,
     payload: EventPatch,
@@ -382,7 +382,7 @@ def patch_event(
     return {"code": 0, "message": "success", "data": _serialize_event(event)}
 
 
-@router.post("/events/{event_no}/ai-analyze")
+@router.post("/events/{event_no}/ai-analyze", dependencies=[Depends(require_permission("log:manage"))])
 def ai_analyze_event(event_no: str, db: Session = Depends(get_db)):
     """管理端：手动触发单个安全事件的 AI 研判。"""
     if not settings.ai_enabled or not settings.ai_model:
@@ -436,7 +436,7 @@ def list_alerts(
     return {"code": 0, "message": "success", "data": {"items": items, "total": total, "page": page, "page_size": page_size}}
 
 
-@router.post("/alerts/{alert_no}/retry")
+@router.post("/alerts/{alert_no}/retry", dependencies=[Depends(require_permission("log:manage"))])
 def retry_alert(
     alert_no: str,
     db: Session = Depends(get_db),
@@ -501,7 +501,7 @@ def list_rules(db: Session = Depends(get_db)):
     return {"code": 0, "message": "success", "data": {"items": [_serialize_rule(r) for r in rows], "total": len(rows)}}
 
 
-@router.post("/rules", status_code=status.HTTP_201_CREATED)
+@router.post("/rules", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("log:manage"))])
 def create_rule(
     payload: RuleIn,
     db: Session = Depends(get_db),
@@ -527,7 +527,7 @@ def create_rule(
     return {"code": 0, "message": "created", "data": _serialize_rule(rule)}
 
 
-@router.put("/rules/{rule_code}")
+@router.put("/rules/{rule_code}", dependencies=[Depends(require_permission("log:manage"))])
 def update_rule(
     rule_code: str,
     payload: RuleUpdate,
@@ -590,7 +590,7 @@ def list_rule_suggestions(
     return {"code": 0, "message": "success", "data": {"items": [_serialize_suggestion(s) for s in rows], "total": len(rows)}}
 
 
-@router.post("/rule-suggestions/{suggestion_id}/accept")
+@router.post("/rule-suggestions/{suggestion_id}/accept", dependencies=[Depends(require_permission("log:manage"))])
 def accept_rule_suggestion(suggestion_id: int, db: Session = Depends(get_db)):
     """管理端：采纳建议 → 生成一条启用规则，并标记建议为 accepted。"""
     s = db.get(RuleSuggestion, suggestion_id)
@@ -627,7 +627,7 @@ def accept_rule_suggestion(suggestion_id: int, db: Session = Depends(get_db)):
     return {"code": 0, "message": "accepted", "data": {"rule_code": rule.rule_code}}
 
 
-@router.post("/rule-suggestions/{suggestion_id}/ignore")
+@router.post("/rule-suggestions/{suggestion_id}/ignore", dependencies=[Depends(require_permission("log:manage"))])
 def ignore_rule_suggestion(suggestion_id: int, db: Session = Depends(get_db)):
     """管理端：忽略建议。"""
     s = db.get(RuleSuggestion, suggestion_id)
@@ -692,7 +692,7 @@ def list_devices(
     return {"code": 0, "message": "success", "data": {"items": items, "total": total, "page": page, "page_size": page_size}}
 
 
-@router.post("/devices", status_code=status.HTTP_201_CREATED)
+@router.post("/devices", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("log:manage"))])
 def register_device(
     payload: DeviceIn,
     db: Session = Depends(get_db),
@@ -738,7 +738,7 @@ def register_device(
     }
 
 
-@router.delete("/devices/{device_id}")
+@router.delete("/devices/{device_id}", dependencies=[Depends(require_permission("log:manage"))])
 def delete_device(device_id: str, db: Session = Depends(get_db)):
     """管理端：删除设备（仅删注册表记录，不影响其历史日志/事件）。"""
     device = db.scalar(select(DeviceRegistry).where(DeviceRegistry.device_id == device_id))

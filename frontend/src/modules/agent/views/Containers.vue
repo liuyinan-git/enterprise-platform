@@ -213,7 +213,7 @@ import ContainerLogDialog from '@/modules/agent/components/ContainerLogDialog.vu
 
 const auth = useAuthStore()
 /** 前端按钮门禁；服务端会独立再校验一次，前端隐藏只是 UX */
-const canControl = computed(() => auth.canAccess(['agent_container_admin']))
+const canControl = computed(() => auth.canAccess('agent:container'))
 
 const items = ref<AgentContainerItem[]>([])
 const summary = ref<ProjectSummary | null>(null)

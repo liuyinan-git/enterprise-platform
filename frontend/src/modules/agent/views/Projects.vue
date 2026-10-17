@@ -163,7 +163,7 @@ import { useAuthStore } from '@/core/auth/store'
 
 const auth = useAuthStore()
 /** 规则写操作的门禁；服务端会独立再校验一次 */
-const canEdit = computed(() => auth.canAccess(['agent_admin']))
+const canEdit = computed(() => auth.canAccess('agent:manage'))
 
 interface ProjectRow {
   project_key: string

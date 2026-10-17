@@ -55,3 +55,38 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   )
   return data.data
 }
+
+export interface PlatformOverview {
+  log: {
+    device_total: number
+    event_today: number
+    open_events: number
+    pending_alerts: number
+    trend: { date: string; count: number }[]
+  }
+  agent: {
+    project_count: number
+    api_total: number
+    api_healthy: number
+    container_count: number | null
+    running_count: number | null
+  }
+  model: {
+    provider_count: number
+    model_count: number
+    consumer_count: number
+    alert_count: number
+  }
+  database: {
+    instance_count: number
+    backup_count: number
+    container_count: number | null
+  }
+}
+
+export async function getOverview(): Promise<PlatformOverview> {
+  const { data } = await client.get<{ code: number; message: string; data: PlatformOverview }>(
+    '/api/v1/overview',
+  )
+  return data.data
+}

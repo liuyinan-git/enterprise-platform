@@ -14,6 +14,7 @@ from app.modules.gateway.api import router as gateway_router
 from app.modules.log.api import router as log_router
 from app.modules.log.ingest_api import ingest_router as log_ingest_router
 from app.modules.model.api import router as model_router
+from app.modules.rbac.api import router as rbac_router
 from app.platform.attachments.api import router as attachments_router
 from app.platform.auth.api import router as auth_router
 from app.platform.monitoring.api import router as monitoring_router
@@ -77,6 +78,7 @@ for _router in (
     model_router,
     database_router,
     gateway_router,
+    rbac_router,
     notifications_router,
     attachments_router,
     monitoring_router,

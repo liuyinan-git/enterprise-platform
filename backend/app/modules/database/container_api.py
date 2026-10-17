@@ -19,7 +19,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.auth import CurrentUser, get_current_user, require_roles
+from app.core.auth import CurrentUser, get_current_user, require_permission
 from app.core.db import get_db
 from app.core.response import ok, paginated
 from app.core.timeutil import local_now
@@ -209,7 +209,7 @@ def get_container_exec_command(container_id: str):
     return ok(container_rules.build_exec_commands(target))
 
 
-@router.post("/database-containers/{container_id}/start", dependencies=[Depends(require_roles(*_ACTION_ROLES))])
+@router.post("/database-containers/{container_id}/start", dependencies=[Depends(require_permission("database:container"))])
 def start_container(
     container_id: str,
     user: CurrentUser = Depends(get_current_user),
@@ -218,7 +218,7 @@ def start_container(
     return ok(_operate(container_id, "start", None, user, db), message="started")
 
 
-@router.post("/database-containers/{container_id}/stop", dependencies=[Depends(require_roles(*_ACTION_ROLES))])
+@router.post("/database-containers/{container_id}/stop", dependencies=[Depends(require_permission("database:container"))])
 def stop_container(
     container_id: str,
     payload: ContainerActionIn | None = None,
@@ -228,7 +228,7 @@ def stop_container(
     return ok(_operate(container_id, "stop", payload.timeout if payload else None, user, db), message="stopped")
 
 
-@router.post("/database-containers/{container_id}/restart", dependencies=[Depends(require_roles(*_ACTION_ROLES))])
+@router.post("/database-containers/{container_id}/restart", dependencies=[Depends(require_permission("database:container"))])
 def restart_container(
     container_id: str,
     payload: ContainerActionIn | None = None,

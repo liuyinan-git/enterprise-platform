@@ -5,11 +5,12 @@ import agentRoutes from '@/modules/agent/routes'
 import modelRoutes from '@/modules/model/routes'
 import databaseRoutes from '@/modules/database/routes'
 import gatewayRoutes from '@/modules/gateway/routes'
+import rbacRoutes from '@/modules/rbac/routes'
 import platformRoutes from '@/platform/routes'
 import { useAuthStore } from '@/core/auth/store'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory('/enterprise/'),
   routes: [
     {
       path: '/',
@@ -22,6 +23,7 @@ const router = createRouter({
         ...modelRoutes,
         ...databaseRoutes,
         ...gatewayRoutes,
+        ...rbacRoutes,
       ],
     },
   ],

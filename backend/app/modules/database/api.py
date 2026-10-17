@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_roles
+from app.core.auth import require_permission
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
 from app.core.security import mask_secret
@@ -17,7 +17,7 @@ from app.modules.database.services import probe_instance
 router = APIRouter(
     prefix="/api/v1",
     tags=["database"],
-    dependencies=[Depends(require_roles("admin", "viewer", "database_admin"))],
+    dependencies=[Depends(require_permission("database:view"))],
 )
 
 # 容器实况接口并入本 router：因此改 main.py 的事情一件都不用做。
@@ -152,7 +152,7 @@ def database_overview(
     })
 
 
-@router.post("/database-instances", status_code=status.HTTP_201_CREATED)
+@router.post("/database-instances", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("database:manage"))])
 def create_instance(payload: InstanceIn, db: Session = Depends(get_db)):
     if db.scalar(select(DatabaseInstance.id).where(DatabaseInstance.instance_code == payload.instance_code)):
         raise HTTPException(status_code=409, detail=f"实例 {payload.instance_code} 已存在")
@@ -183,7 +183,7 @@ def get_instance(code: str, db: Session = Depends(get_db)):
     return ok(_serialize_instance(inst))
 
 
-@router.put("/database-instances/{code}")
+@router.put("/database-instances/{code}", dependencies=[Depends(require_permission("database:manage"))])
 def update_instance(code: str, payload: InstanceUpdate, db: Session = Depends(get_db)):
     inst = db.scalar(select(DatabaseInstance).where(DatabaseInstance.instance_code == code))
     if inst is None:
@@ -199,7 +199,7 @@ def update_instance(code: str, payload: InstanceUpdate, db: Session = Depends(ge
     return ok(_serialize_instance(inst))
 
 
-@router.delete("/database-instances/{code}")
+@router.delete("/database-instances/{code}", dependencies=[Depends(require_permission("database:manage"))])
 def delete_instance(code: str, db: Session = Depends(get_db)):
     inst = db.scalar(select(DatabaseInstance).where(DatabaseInstance.instance_code == code))
     if inst is None:
@@ -209,7 +209,7 @@ def delete_instance(code: str, db: Session = Depends(get_db)):
     return ok({"instance_code": code}, message="deleted")
 
 
-@router.post("/database-instances/{code}/check")
+@router.post("/database-instances/{code}/check", dependencies=[Depends(require_permission("database:manage"))])
 def check_instance(code: str, db: Session = Depends(get_db)):
     inst = db.scalar(select(DatabaseInstance).where(DatabaseInstance.instance_code == code))
     if inst is None:
@@ -292,7 +292,7 @@ def list_backups(
     return paginated(items, total, page, page_size)
 
 
-@router.post("/database-backups", status_code=status.HTTP_201_CREATED)
+@router.post("/database-backups", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("database:manage"))])
 def register_backup(payload: BackupIn, db: Session = Depends(get_db)):
     inst = db.scalar(select(DatabaseInstance).where(DatabaseInstance.instance_code == payload.instance_code))
     if inst is None:

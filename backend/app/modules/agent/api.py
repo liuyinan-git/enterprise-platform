@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_roles
+from app.core.auth import require_permission
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
 from app.modules.agent.container_api import router as container_router
@@ -16,7 +16,7 @@ from app.modules.agent.services import agent_status, record_audit
 router = APIRouter(
     prefix="/api/v1",
     tags=["agent"],
-    dependencies=[Depends(require_roles("admin", "viewer", "agent_admin"))],
+    dependencies=[Depends(require_permission("agent:view"))],
 )
 
 # AI Agent 平台的四个子 router 并入本 router：因此改 main.py 的事情一件都不用做。
@@ -64,7 +64,7 @@ def list_agents(
     return paginated([_serialize(a) for a in rows], total, page, page_size)
 
 
-@router.post("/agents", status_code=status.HTTP_201_CREATED)
+@router.post("/agents", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("agent:manage"))])
 def register_agent(payload: AgentIn, db: Session = Depends(get_db)):
     agent = db.scalar(select(AgentRegistry).where(AgentRegistry.agent_id == payload.agent_id))
     is_new = agent is None
@@ -93,7 +93,7 @@ def get_agent(agent_id: str, db: Session = Depends(get_db)):
     return ok(_serialize(agent))
 
 
-@router.patch("/agents/{agent_id}")
+@router.patch("/agents/{agent_id}", dependencies=[Depends(require_permission("agent:manage"))])
 def update_agent(agent_id: str, payload: AgentUpdate, db: Session = Depends(get_db)):
     agent = db.scalar(select(AgentRegistry).where(AgentRegistry.agent_id == agent_id))
     if agent is None:
@@ -108,7 +108,7 @@ def update_agent(agent_id: str, payload: AgentUpdate, db: Session = Depends(get_
     return ok(_serialize(agent))
 
 
-@router.delete("/agents/{agent_id}")
+@router.delete("/agents/{agent_id}", dependencies=[Depends(require_permission("agent:manage"))])
 def delete_agent(agent_id: str, db: Session = Depends(get_db)):
     agent = db.scalar(select(AgentRegistry).where(AgentRegistry.agent_id == agent_id))
     if agent is None:

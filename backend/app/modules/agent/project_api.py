@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_roles
+from app.core.auth import require_permission
 from app.core.db import get_db
 from app.core.response import created, ok
 from app.modules.agent import containers as container_rules
@@ -89,7 +89,7 @@ def list_project_rules(
 
 
 @router.post("/agent/project-rules", status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+             dependencies=[Depends(require_permission("agent:manage"))])
 def create_project_rule(payload: ProjectRuleIn, db: Session = Depends(get_db)):
     exists = db.scalar(select(AgentProjectRule).where(AgentProjectRule.project_key == payload.project_key))
     if exists is not None:
@@ -114,7 +114,7 @@ def get_project_rule(project_key: str, db: Session = Depends(get_db)):
     return ok(_serialize(_get(db, project_key)))
 
 
-@router.put("/agent/project-rules/{project_key}", dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+@router.put("/agent/project-rules/{project_key}", dependencies=[Depends(require_permission("agent:manage"))])
 def update_project_rule(project_key: str, payload: ProjectRuleUpdate, db: Session = Depends(get_db)):
     rule = _get(db, project_key)
     for field in ("project_name", "enabled", "compose_project_names",
@@ -127,7 +127,7 @@ def update_project_rule(project_key: str, payload: ProjectRuleUpdate, db: Sessio
     return ok(_serialize(rule))
 
 
-@router.patch("/agent/project-rules/{project_key}/enabled", dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+@router.patch("/agent/project-rules/{project_key}/enabled", dependencies=[Depends(require_permission("agent:manage"))])
 def set_project_rule_enabled(project_key: str, payload: RuleEnabledIn, db: Session = Depends(get_db)):
     rule = _get(db, project_key)
     rule.enabled = payload.enabled
@@ -136,7 +136,7 @@ def set_project_rule_enabled(project_key: str, payload: RuleEnabledIn, db: Sessi
     return ok(_serialize(rule))
 
 
-@router.delete("/agent/project-rules/{project_key}", dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+@router.delete("/agent/project-rules/{project_key}", dependencies=[Depends(require_permission("agent:manage"))])
 def delete_project_rule(project_key: str, db: Session = Depends(get_db)):
     """删除的**只是分类规则**，不会碰任何实际 Docker 容器。
 

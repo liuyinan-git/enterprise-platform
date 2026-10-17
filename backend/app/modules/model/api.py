@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_roles
+from app.core.auth import require_permission
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
 from app.core.security import mask_secret
@@ -32,7 +32,7 @@ from app.modules.model.services.container_live import annotate_failure, containe
 router = APIRouter(
     prefix="/api/v1",
     tags=["model"],
-    dependencies=[Depends(require_roles("admin", "viewer", "model_admin"))],
+    dependencies=[Depends(require_permission("model:view"))],
 )
 
 
@@ -97,7 +97,7 @@ def list_providers(
     return paginated([_serialize_provider(p) for p in rows], total, page, page_size)
 
 
-@router.post("/model-providers", status_code=status.HTTP_201_CREATED)
+@router.post("/model-providers", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model:manage"))])
 def create_provider(payload: ProviderIn, db: Session = Depends(get_db)):
     if db.scalar(select(ModelProvider.id).where(ModelProvider.provider_code == payload.provider_code)):
         raise HTTPException(status_code=409, detail=f"供应商 {payload.provider_code} 已存在")
@@ -123,7 +123,7 @@ def get_provider(code: str, db: Session = Depends(get_db)):
     return ok(_serialize_provider(provider))
 
 
-@router.put("/model-providers/{code}")
+@router.put("/model-providers/{code}", dependencies=[Depends(require_permission("model:manage"))])
 def update_provider(code: str, payload: ProviderUpdate, db: Session = Depends(get_db)):
     provider = db.scalar(select(ModelProvider).where(ModelProvider.provider_code == code))
     if provider is None:
@@ -139,7 +139,7 @@ def update_provider(code: str, payload: ProviderUpdate, db: Session = Depends(ge
     return ok(_serialize_provider(provider))
 
 
-@router.delete("/model-providers/{code}")
+@router.delete("/model-providers/{code}", dependencies=[Depends(require_permission("model:manage"))])
 def delete_provider(code: str, db: Session = Depends(get_db)):
     provider = db.scalar(select(ModelProvider).where(ModelProvider.provider_code == code))
     if provider is None:
@@ -178,7 +178,7 @@ def list_models(
     return paginated(items, total, page, page_size)
 
 
-@router.post("/models", status_code=status.HTTP_201_CREATED)
+@router.post("/models", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model:manage"))])
 def create_model(payload: ModelIn, db: Session = Depends(get_db)):
     if db.scalar(select(ModelRegistry.id).where(ModelRegistry.model_code == payload.model_code)):
         raise HTTPException(status_code=409, detail=f"模型 {payload.model_code} 已存在")
@@ -216,7 +216,7 @@ def get_model(code: str, db: Session = Depends(get_db)):
     return ok(item)
 
 
-@router.put("/models/{code}")
+@router.put("/models/{code}", dependencies=[Depends(require_permission("model:manage"))])
 def update_model(code: str, payload: ModelUpdate, db: Session = Depends(get_db)):
     model = db.scalar(select(ModelRegistry).where(ModelRegistry.model_code == code))
     if model is None:
@@ -234,7 +234,7 @@ def update_model(code: str, payload: ModelUpdate, db: Session = Depends(get_db))
     return ok(_serialize_model(model, provider.provider_code if provider else None, provider.provider_name if provider else None))
 
 
-@router.delete("/models/{code}")
+@router.delete("/models/{code}", dependencies=[Depends(require_permission("model:manage"))])
 def delete_model(code: str, db: Session = Depends(get_db)):
     model = db.scalar(select(ModelRegistry).where(ModelRegistry.model_code == code))
     if model is None:
@@ -247,7 +247,7 @@ def delete_model(code: str, db: Session = Depends(get_db)):
     return ok({"model_code": code}, message="deleted")
 
 
-@router.post("/models/{code}/check")
+@router.post("/models/{code}/check", dependencies=[Depends(require_permission("model:manage"))])
 def check_model(code: str, db: Session = Depends(get_db)):
     """手动探测单个模型服务（按 probe_method 分层），并落健康历史；同步驱动告警状态机。"""
     model = db.scalar(select(ModelRegistry).where(ModelRegistry.model_code == code))
@@ -345,7 +345,7 @@ def list_usages(
     return paginated(items, total, page, page_size)
 
 
-@router.post("/model-usages", status_code=status.HTTP_201_CREATED)
+@router.post("/model-usages", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model:manage"))])
 def record_usage(payload: UsageIn, db: Session = Depends(get_db)):
     model = db.scalar(select(ModelRegistry).where(ModelRegistry.model_code == payload.model_code))
     if model is None:

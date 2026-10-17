@@ -240,7 +240,7 @@ import UnregisteredContainers from '@/modules/database/components/UnregisteredCo
 
 const auth = useAuthStore()
 /** 前端按钮门禁；服务端会独立再校验一次，前端隐藏只是 UX */
-const canControl = computed(() => auth.canAccess(['database_container_admin']))
+const canControl = computed(() => auth.canAccess('database:container'))
 
 const items = ref<OverviewItem[]>([])
 const total = ref(0)

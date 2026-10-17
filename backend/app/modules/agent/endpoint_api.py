@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_roles
+from app.core.auth import require_permission
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
 from app.modules.agent.models import AgentEndpoint, AgentHealthHistory
@@ -112,7 +112,7 @@ def endpoint_options(db: Session = Depends(get_db)):
 
 
 @router.post("/agent/endpoints", status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+             dependencies=[Depends(require_permission("agent:manage"))])
 def create_endpoint(payload: EndpointIn, db: Session = Depends(get_db)):
     exists = db.scalar(select(AgentEndpoint).where(AgentEndpoint.endpoint_code == payload.endpoint_code))
     if exists is not None:
@@ -138,7 +138,7 @@ def create_endpoint(payload: EndpointIn, db: Session = Depends(get_db)):
     return created(_serialize(endpoint))
 
 
-@router.post("/agent/endpoints/check-batch", dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+@router.post("/agent/endpoints/check-batch", dependencies=[Depends(require_permission("agent:manage"))])
 def check_endpoints_batch(payload: CheckBatchIn | None = None, db: Session = Depends(get_db)):
     """批量检查。codes 为空/省略 = 检查全部启用中的端点。
 
@@ -168,7 +168,7 @@ def get_endpoint(endpoint_code: str, db: Session = Depends(get_db)):
     return ok(_serialize(_get(db, endpoint_code)))
 
 
-@router.put("/agent/endpoints/{endpoint_code}", dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+@router.put("/agent/endpoints/{endpoint_code}", dependencies=[Depends(require_permission("agent:manage"))])
 def update_endpoint(endpoint_code: str, payload: EndpointUpdate, db: Session = Depends(get_db)):
     endpoint = _get(db, endpoint_code)
     # group 在请求体里叫 group，落到列上是 group_name
@@ -186,7 +186,7 @@ def update_endpoint(endpoint_code: str, payload: EndpointUpdate, db: Session = D
     return ok(_serialize(endpoint))
 
 
-@router.delete("/agent/endpoints/{endpoint_code}", dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+@router.delete("/agent/endpoints/{endpoint_code}", dependencies=[Depends(require_permission("agent:manage"))])
 def delete_endpoint(endpoint_code: str, db: Session = Depends(get_db)):
     """删除的**只是监控配置**，不会删除任何实际容器 / 服务。
 
@@ -199,7 +199,7 @@ def delete_endpoint(endpoint_code: str, db: Session = Depends(get_db)):
     return ok({"endpoint_code": endpoint_code}, message="deleted")
 
 
-@router.post("/agent/endpoints/{endpoint_code}/check", dependencies=[Depends(require_roles(*_LEDGER_ROLES))])
+@router.post("/agent/endpoints/{endpoint_code}/check", dependencies=[Depends(require_permission("agent:manage"))])
 def check_single_endpoint(endpoint_code: str, db: Session = Depends(get_db)):
     endpoint = _get(db, endpoint_code)
     result = check_endpoint(db, endpoint, check_type="manual")

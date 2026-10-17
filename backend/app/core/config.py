@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     collector_api_key: str = "CHANGE_ME_use_a_long_random_secret"
     max_logs_per_batch: int = 1000
     max_raw_message_chars: int = 20000
-    raw_log_retention_days: int = 90
-    event_retention_days: int = 365
+    raw_log_retention_days: int = 7
+    event_retention_days: int = 7
     wecom_enabled: bool = False
     wecom_corpid: str = ""
     wecom_corpsecret: str = ""

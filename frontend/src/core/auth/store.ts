@@ -5,6 +5,7 @@ interface AuthUser {
   user_id: string
   username: string
   roles: string[]
+  permissions: string[]
 }
 
 interface AuthConfig {
@@ -26,6 +27,7 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     authEnabled: (state) => state.config?.enabled ?? false,
     roles: (state) => state.user?.roles ?? [],
+    permissions: (state) => state.user?.permissions ?? [],
   },
   actions: {
     async initAuth() {
@@ -48,12 +50,12 @@ export const useAuthStore = defineStore('auth', {
       this.user = data.data
     },
 
-    /** 当前用户是否可访问声明了 requiredRoles 的菜单。authEnabled=false 时全放行。 */
-    canAccess(requiredRoles: string[]): boolean {
+    /** 当前用户是否拥有指定权限。authEnabled=false 时全放行；permission 缺省表示无需权限。 */
+    canAccess(permission?: string): boolean {
       if (!this.authEnabled) return true
       if (this.roles.includes('admin')) return true
-      if (requiredRoles.length === 0) return true
-      return requiredRoles.some((r) => this.roles.includes(r))
+      if (!permission) return true
+      return this.permissions.includes(permission)
     },
   },
 })

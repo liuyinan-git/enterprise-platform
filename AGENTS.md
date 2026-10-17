@@ -1,6 +1,6 @@
 # AGENTS.md — 项目说明
 
-> 本文档供 AI 编码助手及新成员快速了解本项目。最后更新：2026-10-16。
+> 本文档供 AI 编码助手及新成员快速了解本项目。最后更新：2026-10-17。
 
 ## 一、项目概况
 
@@ -64,14 +64,15 @@ enterprise-platform/
 │   │   │   ├── notifications/    #   企业微信：models/schemas/service/wecom/api
 │   │   │   ├── attachments/      #   附件：models + api（/files）
 │   │   │   └── monitoring/       #   系统监控 + 总览（/system/* /dashboard/*）
-│   │   ├── modules/              # 业务模块（4 个，结构一致）
+│   │   ├── modules/              # 业务模块（5 个，结构一致）
 │   │   │   ├── log/              #   日志管控：models/schemas/api/services/parsers/rules/ai/tasks
 │   │   │   ├── agent/            #   智能体管控：models/schemas/api/services/tasks
 │   │   │   │                     #     + AI Agent 平台：agent_config/docker_client/containers/
 │   │   │   │                     #       probes/container_api/project_api/endpoint_api/overview_api
 │   │   │   ├── model/            #   模型管控：models/schemas/api/services/tasks
-│   │   │   └── database/         #   数据库管控：models/schemas/api/services/tasks
-│   │   │                         #     + 容器实况：docker_client/containers/container_api/container_config
+│   │   │   ├── database/         #   数据库管控：models/schemas/api/services/tasks
+│   │   │   │                     #     + 容器实况：docker_client/containers/container_api/container_config
+│   │   │   └── gateway/          #   网关管控（Squid/APISIX，后端已有，前端菜单暂注释）：db/models/routers/services
 │   │   └── tasks/                # Celery 装配：celery_app.py + registry.py
 │   └── tests/                    # 测试（占位）
 ├── frontend/
@@ -91,7 +92,7 @@ enterprise-platform/
 
 ## 三、配置（backend/app/core/config.py）
 
-通过 `pydantic-settings` 的 `BaseSettings` 读取环境变量或 `.env`。关键字段（新增三项见末尾）：
+通过 `pydantic-settings` 的 `BaseSettings` 读取环境变量或 `.env`。关键字段：
 
 | 配置项 | 默认值 | 说明 |
 | ------ | ------ | ---- |
@@ -107,6 +108,8 @@ enterprise-platform/
 | `agent_offline_grace_seconds` | `300` | 智能体心跳超时判定离线宽限 |
 | `model_check_timeout_seconds` | `5` | 模型端点探测超时 |
 | `database_check_timeout_seconds` | `3` | 数据库连接探测超时 |
+| `gateway_auth_enabled` | `False` | 网关统一认证开关（APISIX openid-connect + forward-auth 对接 MaxKey） |
+| `gateway_user_id_header` / `gateway_username_header` / `gateway_roles_header` | `x-user-id` / `x-user-num` / `x-user-roles` | APISIX 注入的用户头字段名（ID / 工号 / 角色） |
 
 - `database_url` / `redis_url` 为派生属性；`get_settings()` 用 `@lru_cache` 缓存。
 - **例外：容器相关的两份配置都不在这里**——数据库模块的在 [modules/database/container_config.py](backend/app/modules/database/container_config.py)（读 `CONTAINER_*`），AI Agent 平台的在 [modules/agent/agent_config.py](backend/app/modules/agent/agent_config.py)（读 `AGENT_*`，见第六节）。因为本文件的 `Settings` 是 `extra="ignore"`，`.env` 里多出的键不会让它报错，模块自带一份 `BaseSettings` 读同一份 `.env` 即可——**多人协作时新增配置不必改这个共享文件**。
@@ -212,7 +215,7 @@ LangGraph **不另开端点**：LangGraph 页直接以 `service_type=langgraph` 
 ### 鉴权与响应格式
 
 - 采集接口通过 **`X-API-Key`** 鉴权（`require_collector_key`，`compare_digest` 防时序攻击）；未配置返回 503、不匹配返回 401。
-- 管理接口走 `Depends(require_roles(...))`；`OIDC_ENABLED=false`（当前默认）时降级为**匿名 admin**，即内网开放现状，开启 OIDC 后按 token 角色控制。**容器启停额外要求 `database_container_admin`（数据库模块）或 `agent_container_admin`（agent 模块）**，`viewer` 只能看。台账写权限（`agent_admin`）与容器启停权限刻意分开。
+- 管理接口走 `Depends(require_roles(...))`；`GATEWAY_AUTH_ENABLED=false`（当前默认）时降级为**匿名 admin**（内网开放现状）。开启后，登录认证由 **APISIX 网关**完成（`openid-connect` + `forward-auth` 插件对接 MaxKey 统一认证中心），后端 [core/auth.py](backend/app/core/auth.py) 从 APISIX 注入的请求头读取用户与角色：`x-user-id`（用户 ID）、`x-user-num`（工号/用户名）、`x-user-roles`（角色，逗号/空格分隔或 JSON 数组）。**容器启停额外要求 `database_container_admin`（数据库模块）或 `agent_container_admin`（agent 模块）**，`viewer` 只能看。台账写权限（`agent_admin`）与容器启停权限刻意分开。
 - 统一响应 `{"code": 0, "message": "...", "data": ...}`（新模块用 `core/response.py` 的 `ok()/created()/paginated()`）。
 
 ## 五、数据模型
@@ -233,7 +236,7 @@ LangGraph **不另开端点**：LangGraph 页直接以 `service_type=langgraph` 
 
 **容器清单本身不落库**，始终实时读 Docker —— 新鲜度正是这个页面的意义，而分类是「实时容器 × 落库规则」的纯函数，落库只会引入一类陈旧数据的 bug。**系统设置页也不建表**（决策：只读展示，间隔走 `.env`）。
 
-迁移脚本 `0001..0013`，其中 `0009_agent_module`、`0010_model_module`、`0011_database_module`、`0012_database_container`、`0013_agent_platform` 为新增模块表。
+迁移脚本 `0001..0015`，其中 `0009_agent_module`、`0010_model_module`、`0011_database_module`、`0012_database_container`、`0013_agent_platform`、`0014_model_monitor`、`0015_model_consumer_alert` 为新增模块表。
 
 ## 六、核心逻辑
 
@@ -331,10 +334,10 @@ LangGraph **不另开端点**：LangGraph 页直接以 `service_type=langgraph` 
 4. **企业微信 / AI 研判**：配置存 `wecom_config` 单行表；AI 客户端在 `core/ai_client.py`，AI 研判业务在 log 模块。
 5. **TypeScript 版本**：`frontend/package.json` 固定 `typescript@^5.9.3`。
 6. **附件存储目录**：`uploads/` 需挂载卷持久化。
-7. **⚠️ 容器管控上线前必须先开 OIDC**：`OIDC_ENABLED=false`（当前默认）时 `core/auth.py` 返回**匿名 admin**，即内网任何能访问 7550 的人都能启停宿主机的数据库容器。引入挂 `docker.sock` 类能力之前务必先接好 OIDC，并在 IdP 侧配置 `database_container_admin` 角色（未配置前实际只有 `admin` 可操作）。
-8. **受管容器的识别约定**：给容器打 `platform.type` 标签（取值见 `containers.py` 的 `MANAGED_TYPES`，共 19 种，含 postgres/mysql/mariadb/oracle/sqlserver/redis/mongodb/elasticsearch/clickhouse/milvus/qdrant/weknora/cognee 等），且 label 优先级最高、可覆盖镜像名推断；不打标则回退按镜像名、容器名推断。台账侧可用 `database_instance.attributes.docker_container`（容器名或 ID）显式指定关联的容器，否则按 `instance_code` 与容器名同名匹配。**注意 `platform.protected=true` 只能创建时打，容器标签创建后不可变**，无法事后给已在跑的容器补保护——要收窄范围只能靠开 OIDC 或防火墙。
+7. **⚠️ 容器管控上线前必须先开网关认证**：`GATEWAY_AUTH_ENABLED=false`（当前默认）时 `core/auth.py` 返回**匿名 admin**，即内网任何能访问 7550 的人都能启停宿主机的数据库容器。引入挂 `docker.sock` 类能力之前务必先接好网关认证，并在 MaxKey/IdP 侧配置 `database_container_admin` 角色（未配置前实际只有 `admin` 可操作）。
+8. **受管容器的识别约定**：给容器打 `platform.type` 标签（取值见 `containers.py` 的 `MANAGED_TYPES`，共 19 种，含 postgres/mysql/mariadb/oracle/sqlserver/redis/mongodb/elasticsearch/clickhouse/milvus/qdrant/weknora/cognee 等），且 label 优先级最高、可覆盖镜像名推断；不打标则回退按镜像名、容器名推断。台账侧可用 `database_instance.attributes.docker_container`（容器名或 ID）显式指定关联的容器，否则按 `instance_code` 与容器名同名匹配。**注意 `platform.protected=true` 只能创建时打，容器标签创建后不可变**，无法事后给已在跑的容器补保护——要收窄范围只能靠开网关认证或防火墙。
 9. **容器操作审计**：所有启停（含被拒绝的）写 `database_container_audit`，可在前端「数据库实例」页的「操作记录」抽屉里看。容器清单本身**不落库**，始终实时读 Docker。
-10. **⚠️ AI Agent 平台的启停面更宽，OIDC 更必须先开**：数据库模块只放行 19 类**受管类型**，而 agent 平台放行「**属于某个已分类项目**」的容器——很多。`OIDC_ENABLED=false`（当前默认）时，内网任何能访问 7550 的人都能启停这些容器。上线前务必先接好 OIDC，并在 IdP 侧配置 `agent_container_admin` 与 `agent_admin` 角色（**两个角色刻意分开**：前者能重启服务，后者只能改台账）。未配置该角色前实际只有 `admin` 可操作。
+10. **⚠️ AI Agent 平台的启停面更宽，网关认证更必须先开**：数据库模块只放行 19 类**受管类型**，而 agent 平台放行「**属于某个已分类项目**」的容器——很多。`GATEWAY_AUTH_ENABLED=false`（当前默认）时，内网任何能访问 7550 的人都能启停这些容器。上线前务必先接好网关认证，并在 MaxKey/IdP 侧配置 `agent_container_admin` 与 `agent_admin` 角色（**两个角色刻意分开**：前者能重启服务，后者只能改台账）。未配置该角色前实际只有 `admin` 可操作。
 11. **AI Agent 平台的项目分类约定**：分类靠 `agent_project_rule` 两张列表——compose 项目名（一级，精确）与容器名正则（二级，仅一级空时才用），命中 ≥2 条即判 `conflict` **且不指派**（归属不明的容器拿不到启停权）。给容器打 `com.docker.compose.project` 标签或用规范化的容器名是最省事的接入方式。规则只此一处（[containers.py](backend/app/modules/agent/containers.py)），**加规则是运营动作不是发版动作**——在前端「项目与分类规则」页加即可，无需改代码。
 12. **监控历史不随配置删除而删除**：`agent_health_history` 刻意无 FK 且冗余了端点名/类型。保留期由 `AGENT_HISTORY_RETENTION_DAYS` 决定，由 `cleanup_agent_history`（3600s）执行；**这个配置项与那个任务是配对的，去掉任务就等于让配置项失效**。
 13. **agent 平台与既有智能体台账同模块不同前缀**：台账是 `/api/v1/agents`（前端 `/agents`），平台是 `/api/v1/agent/*`（前端 `/agent/*`）。前端侧边栏两者同在「智能体管控」分组下（8 项）。新增平台接口时记得：`main.py` / `modules/__init__.py` / `tasks/registry.py` / 前端 `router/index.ts` **都不需要改**——子 router 由 `modules/agent/api.py` include，新页面由 `modules/agent/routes.ts` 声明。

@@ -172,7 +172,7 @@ const props = defineProps<{ fixedServiceType?: string }>()
 const auth = useAuthStore()
 const router = useRouter()
 /** 端点写操作与检测的门禁；服务端会独立再校验一次 */
-const canEdit = computed(() => auth.canAccess(['agent_admin']))
+const canEdit = computed(() => auth.canAccess('agent:manage'))
 
 const items = ref<EndpointItem[]>([])
 const total = ref(0)

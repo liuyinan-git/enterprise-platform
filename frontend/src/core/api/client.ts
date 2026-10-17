@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const client = axios.create({
-  baseURL: '/',
+  baseURL: '/enterprise/',
   timeout: 10000,
 })
 
