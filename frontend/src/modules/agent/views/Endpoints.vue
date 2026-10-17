@@ -16,6 +16,16 @@
       <el-form-item label="关键词">
         <el-input v-model="filters.q" placeholder="编码 / 名称 / URL" clearable style="width: 180px" />
       </el-form-item>
+      <el-form-item label="智能体">
+        <el-select v-model="filters.agent_id" clearable filterable placeholder="全部" style="width: 180px">
+          <el-option
+            v-for="a in agents"
+            :key="a.agent_id"
+            :label="a.container_name ? `${a.agent_name}（${a.container_name}）` : a.agent_name"
+            :value="a.agent_id"
+          />
+        </el-select>
+      </el-form-item>
       <el-form-item v-if="!fixedServiceType" label="服务类型">
         <el-select v-model="filters.service_type" clearable placeholder="全部" style="width: 140px">
           <el-option v-for="t in SERVICE_TYPES" :key="t" :label="serviceTypeLabel(t)" :value="t" />
@@ -43,6 +53,13 @@
       </template>
       <el-table-column prop="endpoint_code" label="端点编码" min-width="140" show-overflow-tooltip />
       <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+      <el-table-column label="智能体 / 容器" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.agent_id">{{ row.agent_name || row.agent_id }}</span>
+          <span v-else class="muted">未绑定</span>
+          <div v-if="row.container_name" class="sub">{{ row.container_name }}</div>
+        </template>
+      </el-table-column>
       <el-table-column v-if="!fixedServiceType" label="类型" width="110">
         <template #default="{ row }">
           <el-tag :type="serviceTypeTagType(row.service_type)" size="small">{{ serviceTypeLabel(row.service_type) }}</el-tag>
@@ -116,6 +133,7 @@
   <EndpointFormDialog
     v-model:visible="dialogVisible"
     :endpoint="editingEndpoint"
+    :agents="agents"
     :fixed-service-type="fixedServiceType"
     @saved="load()"
   />
@@ -149,6 +167,7 @@ import {
   fetchEndpointOptions,
   listEndpoints,
   type CheckResultItem,
+  type EndpointAgentOption,
   type EndpointItem,
 } from '@/modules/agent/api'
 import { useAuthStore } from '@/core/auth/store'
@@ -182,6 +201,7 @@ const loading = ref(false)
 const checking = ref(false)
 const checkingCode = ref('')
 const groups = ref<string[]>([])
+const agents = ref<EndpointAgentOption[]>([])
 const lastBatch = ref('')
 
 const dialogVisible = ref(false)
@@ -190,7 +210,7 @@ const editingEndpoint = ref<EndpointItem | null>(null)
 const resultVisible = ref(false)
 const lastResult = ref<CheckResultItem | null>(null)
 
-const filters = reactive({ q: '', service_type: '', group: '', health_status: '' })
+const filters = reactive({ q: '', agent_id: '', service_type: '', group: '', health_status: '' })
 
 function errDetail(e: unknown): string | undefined {
   return (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -208,6 +228,7 @@ async function load() {
       page: page.value,
       page_size: pageSize.value,
       q: filters.q || undefined,
+      agent_id: filters.agent_id || undefined,
       service_type: props.fixedServiceType || filters.service_type || undefined,
       group: filters.group || undefined,
       health_status: filters.health_status || undefined,
@@ -225,6 +246,7 @@ async function loadOptions() {
   try {
     const result = await fetchEndpointOptions()
     groups.value = result.groups
+    agents.value = result.agents
   } catch {
     // 下拉项拿不到不影响主表
   }
@@ -237,6 +259,7 @@ function search() {
 
 function reset() {
   filters.q = ''
+  filters.agent_id = ''
   filters.service_type = ''
   filters.group = ''
   filters.health_status = ''
@@ -349,6 +372,14 @@ onMounted(() => {
 }
 .search-bar {
   margin-bottom: 8px;
+}
+.muted {
+  color: #909399;
+}
+.sub {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .url-cell {
   display: flex;

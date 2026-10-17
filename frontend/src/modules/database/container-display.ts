@@ -97,7 +97,7 @@ export function stateTagType(state: string): TagType {
   }
 }
 
-/** 类型 / 保护状态层面的门禁（不含角色，角色由调用方叠加）。 */
+/** 类型 / 保护状态层面的门禁（不含权限，权限由调用方叠加）。 */
 export function isOperable(container: ContainerItem | null | undefined): boolean {
   if (!container) return false
   return container.managed_type !== 'unknown' && !container.protected

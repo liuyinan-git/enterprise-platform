@@ -91,7 +91,7 @@ const props = defineProps<{
   total: number
   loading: boolean
   includeProtected: boolean
-  /** 当前用户是否具备容器操作角色（服务端仍会独立校验） */
+  /** 当前用户是否具备 database:container 权限（服务端仍会独立校验） */
   canControl: boolean
   /** 当前筛选值：哨兵值或受管类型名 */
   filter: string

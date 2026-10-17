@@ -1,5 +1,5 @@
-# 编排：mysql + redis + docker-proxy + api + worker + scheduler。
-# frontend / nginx / ollama 在后续阶段逐步启用。
+# 编排：mysql + redis + docker-proxy + api + worker + scheduler + frontend。
+# frontend 镜像内自带 nginx：静态资源 + /enterprise/api 反向代理；ollama 在后续阶段启用。
 # docker.sock 仅由 docker-proxy 挂载；api / worker / scheduler 都不挂。
 services:
   mysql:
@@ -68,12 +68,33 @@ services:
       - .env
     ports:
       - "${APP_PORT:-7550}:${APP_PORT:-7550}"
+    volumes:
+      # 源码挂载：改后端代码后 `docker compose restart api` 即生效，无需 --build。
+      # 只挂代码 / 迁移 / 附件目录，不挂整个 backend——避免宿主机的 backend/.env
+      # 被 pydantic-settings 当成 dotenv 读取，覆盖 compose 注入的环境变量。
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini:ro
+      - ./backend/uploads:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_started
       docker-proxy:
+        condition: service_started
+    networks:
+      - backend_net
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      # 浏览器统一入口：/enterprise/ 静态页 + /enterprise/api 反代。
+      # 接入 APISIX 后应只让网关访问此端口，不要直接对客户端暴露。
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      api:
         condition: service_started
     networks:
       - backend_net

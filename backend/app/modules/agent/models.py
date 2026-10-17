@@ -12,6 +12,9 @@ class AgentRegistry(Base):
     __tablename__ = "agent_registry"
     __table_args__ = (
         UniqueConstraint("agent_id", name="uk_agent_id"),
+        # 智能体以容器方式运行时，容器名是它与 Docker 实况的唯一关联键。
+        # 一个智能体只绑定一个容器；唯一索引允许多个 NULL（历史行没有容器名）。
+        UniqueConstraint("container_name", name="uk_agent_container_name"),
         Index("idx_agent_type", "agent_type"),
         Index("idx_agent_last_seen", "last_seen_at"),
         {"mysql_engine": "InnoDB"},
@@ -20,12 +23,16 @@ class AgentRegistry(Base):
     agent_id: Mapped[str] = mapped_column(String(100), nullable=False)
     agent_name: Mapped[str] = mapped_column(String(200), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    container_name: Mapped[str | None] = mapped_column(String(200))
     version: Mapped[str | None] = mapped_column(String(50))
     owner: Mapped[str | None] = mapped_column(String(100))
     environment: Mapped[str | None] = mapped_column(String(50))
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
     attributes: Mapped[dict | list | None] = mapped_column(JSON)
     last_seen_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
+    # 离线告警去重标记：非空表示「已就本次离线告警过」，心跳恢复时清空。
+    # 不用单独的告警表：离线是状态而不是事件流水，一个标记即可防每 60s 重复打扰。
+    offline_alerted_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=3))
     created_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3)"))
     updated_at: Mapped[datetime] = mapped_column(DATETIME(fsp=3), nullable=False, server_default=text("CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"))
 
@@ -84,12 +91,15 @@ class AgentEndpoint(Base):
         Index("idx_agent_endpoint_group", "group_name"),
         Index("idx_agent_endpoint_health", "health_status"),
         Index("idx_agent_endpoint_enabled", "enabled"),
+        # 端点归属的智能体（业务码，不做 FK：删智能体由接口层显式拦截）
+        Index("idx_agent_endpoint_agent", "agent_id"),
         {"mysql_engine": "InnoDB"},
     )
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
     endpoint_code: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     service_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(String(100))
     # 列名加 _name 后缀：`group` 是 SQL 保留字。对外 JSON 里仍叫 "group"。
     group_name: Mapped[str | None] = mapped_column(String(100))
     url: Mapped[str] = mapped_column(String(1000), nullable=False)

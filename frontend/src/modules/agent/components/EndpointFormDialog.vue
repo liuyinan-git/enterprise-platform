@@ -6,6 +6,23 @@
     @update:model-value="emit('update:visible', $event)"
   >
     <el-form :model="form" label-width="110px">
+      <el-form-item label="智能体" required>
+        <el-select
+          v-model="form.agent_id"
+          filterable
+          placeholder="先选择端点归属的已登记智能体"
+          style="width: 100%"
+          @change="onAgentChange"
+        >
+          <el-option
+            v-for="a in agents"
+            :key="a.agent_id"
+            :label="a.container_name ? `${a.agent_name}（${a.container_name}）` : a.agent_name"
+            :value="a.agent_id"
+          />
+        </el-select>
+        <div class="hint">端点监控归属于该智能体；填写其容器内服务的地址。</div>
+      </el-form-item>
       <el-form-item label="端点编码" required>
         <el-input v-model="form.endpoint_code" :disabled="editing" placeholder="如 hermes-gateway" />
       </el-form-item>
@@ -31,7 +48,8 @@
         </el-select>
       </el-form-item>
       <el-form-item label="URL" required>
-        <el-input v-model="form.url" placeholder="http://host:port/path" />
+        <el-input v-model="form.url" placeholder="如 http://容器名:8000/health" />
+        <div class="hint">地址仍手填：平台只负责探测，不解析容器网络。</div>
       </el-form-item>
       <el-form-item label="请求头">
         <el-input
@@ -79,6 +97,7 @@ import { ElMessage } from 'element-plus'
 import {
   createEndpoint,
   updateEndpoint,
+  type EndpointAgentOption,
   type EndpointInput,
   type EndpointItem,
 } from '@/modules/agent/api'
@@ -90,6 +109,8 @@ const props = defineProps<{
   visible: boolean
   /** 传入表示编辑，null 表示新增 */
   endpoint: EndpointItem | null
+  /** 已登记智能体：端点必须先选智能体，再手填地址 */
+  agents: EndpointAgentOption[]
   /** 锁死服务类型（LangGraph 页传 'langgraph'），新增时不显示类型下拉 */
   fixedServiceType?: string
 }>()
@@ -103,6 +124,7 @@ const saving = ref(false)
 const editing = computed(() => Boolean(props.endpoint))
 
 const form = reactive({
+  agent_id: '',
   endpoint_code: '',
   name: '',
   service_type: props.fixedServiceType || 'custom',
@@ -120,6 +142,19 @@ const form = reactive({
 
 const isLangGraph = computed(() => (props.fixedServiceType || form.service_type) === 'langgraph')
 
+function slug(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent'
+}
+
+/** 选中智能体后（仅新增、且字段为空时）给出编码/名称建议；URL 始终手填。 */
+function onAgentChange(agentId: string) {
+  if (editing.value) return
+  const agent = props.agents.find((item) => item.agent_id === agentId)
+  if (!agent) return
+  if (!form.endpoint_code) form.endpoint_code = `${slug(agent.agent_id)}-api`
+  if (!form.name) form.name = `${agent.agent_name} 接口`
+}
+
 watch(
   () => [props.visible, props.endpoint] as const,
   ([visible, endpoint]) => {
@@ -127,6 +162,7 @@ watch(
     if (endpoint) {
       const attributes = (endpoint.attributes || {}) as Record<string, unknown>
       Object.assign(form, {
+        agent_id: endpoint.agent_id || '',
         endpoint_code: endpoint.endpoint_code,
         name: endpoint.name,
         service_type: endpoint.service_type,
@@ -143,6 +179,7 @@ watch(
       })
     } else {
       Object.assign(form, {
+        agent_id: '',
         endpoint_code: '',
         name: '',
         service_type: props.fixedServiceType || 'custom',
@@ -183,6 +220,10 @@ function parseExpected(text: string): number[] {
 }
 
 async function save() {
+  if (!form.agent_id) {
+    ElMessage.warning('请先选择端点归属的智能体')
+    return
+  }
   if (!form.endpoint_code || !form.name || !form.url) {
     ElMessage.warning('请填写端点编码、名称和 URL')
     return
@@ -194,6 +235,7 @@ async function save() {
       endpoint_code: form.endpoint_code,
       name: form.name,
       service_type: props.fixedServiceType || form.service_type,
+      agent_id: form.agent_id,
       group: form.group || undefined,
       url: form.url,
       method: form.method,

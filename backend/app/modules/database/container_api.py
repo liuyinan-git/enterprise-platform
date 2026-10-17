@@ -1,12 +1,12 @@
 """容器实况接口：容器列表 / 详情 / 日志 / exec 命令 / 启停重启 / 操作审计。
 
 **读写守卫分离**：本文件里的读接口由父 router（`api.py`）的
-`require_roles("admin", "viewer", "database_admin")` 覆盖；三个写接口**逐路由**再加
-`require_roles("admin", "database_container_admin")`。
+`require_permission("database:view")` 覆盖；三个写接口**逐路由**要求
+`require_permission("database:container")`。
 
-`database_container_admin` 刻意**不复用** `database_admin`：台账编辑权与「重启宿主机
-数据库容器」的影响面差一个量级，复用等于静默提权。未在 IdP 侧配置该角色前，实际
-只有 `admin` 可用（OIDC 关闭时仍是匿名 admin）。
+权限由 RBAC 统一解析：网关注入的角色 ID 映射成平台角色码，再求出权限集。
+`database:container` 与台账写 `database:manage` 刻意分离，可分别授予；网关认证
+关闭时仍是匿名 admin（角色 admin 恒放行）。
 
 注意：本 router **不带 prefix**，它被 `api.py` 的父 router（`prefix="/api/v1"`）include，
 因此这里的 "/database-containers" 实际暴露为 "/api/v1/database-containers"。
@@ -32,9 +32,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["database-container"])
 
-# 控制面动作的角色：viewer 能看，但不能启停
-_ACTION_ROLES = ("admin", "database_container_admin")
-
 
 def _live_containers() -> list[dict]:
     """实况容器列表；Docker 不可达时抛 503（读列表的接口另行降级为 200）。"""
@@ -57,7 +54,14 @@ def _record(db: Session, target: dict, action: str, result: str, user: CurrentUs
     """写审计。
 
     **审计写失败绝不能把成功的操作变成 500**，所以这里单独兜住异常。
+
+    `user.username`（x-user-num）可能变，真正的稳定标识是 `user_id`；角色快照用于
+    回答「他当时凭什么权限操作」。两者都塞进 detail 的 JSON，无需改表。
     """
+    payload = dict(detail or {})
+    payload["user_id"] = user.user_id
+    payload["roles"] = sorted(user.roles)
+    payload["permissions"] = sorted(user.permissions)
     try:
         db.add(
             DatabaseContainerAudit(
@@ -67,7 +71,7 @@ def _record(db: Session, target: dict, action: str, result: str, user: CurrentUs
                 action=action,
                 result=result,
                 operator=user.username,
-                detail=detail,
+                detail=payload,
             )
         )
         db.commit()
@@ -76,17 +80,35 @@ def _record(db: Session, target: dict, action: str, result: str, user: CurrentUs
         logger.exception("写入容器操作审计失败 container=%s action=%s", target.get("container_id"), action)
 
 
-def _operate(container_id: str, action: str, timeout: int | None, user: CurrentUser, db: Session) -> dict:
+def _require_reason(payload: ContainerActionIn | None) -> str:
+    """停止 / 重启必须填写原因；启动不要求。
+
+    原因随审计落库，回答「为什么停」——这是事后追责里最容易缺失的一环。
+    """
+    reason = (payload.reason or "").strip() if payload else ""
+    if not reason:
+        raise HTTPException(status_code=422, detail="请填写操作原因")
+    return reason
+
+
+def _operate(
+    container_id: str,
+    action: str,
+    timeout: int | None,
+    user: CurrentUser,
+    db: Session,
+    operator_reason: str | None = None,
+) -> dict:
     live = _live_containers()
     target = _match(live, container_id)
     if target is None:
         raise HTTPException(status_code=404, detail="容器不存在")
 
-    reason = container_rules.refusal_reason(target)
-    if reason:
+    refusal = container_rules.refusal_reason(target)
+    if refusal:
         # 受保护 / 未识别 → **在调用 Docker 之前**就拒绝，并留痕
-        _record(db, target, action, "refused", user, {"reason": reason})
-        raise HTTPException(status_code=409, detail=reason)
+        _record(db, target, action, "refused", user, {"reason": refusal, "operator_reason": operator_reason})
+        raise HTTPException(status_code=409, detail=refusal)
 
     try:
         if action == "start":
@@ -96,13 +118,13 @@ def _operate(container_id: str, action: str, timeout: int | None, user: CurrentU
         else:
             docker_client.restart_container(target["full_id"], timeout)
     except docker_client.ContainerNotFound as exc:
-        _record(db, target, action, "failed", user, {"error": str(exc)})
+        _record(db, target, action, "failed", user, {"error": str(exc), "operator_reason": operator_reason})
         raise HTTPException(status_code=404, detail="容器不存在") from exc
     except docker_client.DockerUnavailable as exc:
-        _record(db, target, action, "failed", user, {"error": str(exc)})
+        _record(db, target, action, "failed", user, {"error": str(exc), "operator_reason": operator_reason})
         raise HTTPException(status_code=503, detail=f"操作失败：{exc}") from exc
 
-    _record(db, target, action, "success", user, {"timeout": timeout})
+    _record(db, target, action, "success", user, {"timeout": timeout, "operator_reason": operator_reason})
     return {
         "container_id": target["container_id"],
         "name": target["name"],
@@ -225,7 +247,11 @@ def stop_container(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return ok(_operate(container_id, "stop", payload.timeout if payload else None, user, db), message="stopped")
+    reason = _require_reason(payload)
+    return ok(
+        _operate(container_id, "stop", payload.timeout if payload else None, user, db, reason),
+        message="stopped",
+    )
 
 
 @router.post("/database-containers/{container_id}/restart", dependencies=[Depends(require_permission("database:container"))])
@@ -235,7 +261,11 @@ def restart_container(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return ok(_operate(container_id, "restart", payload.timeout if payload else None, user, db), message="restarted")
+    reason = _require_reason(payload)
+    return ok(
+        _operate(container_id, "restart", payload.timeout if payload else None, user, db, reason),
+        message="restarted",
+    )
 
 
 @router.get("/database-container-audits")
@@ -244,6 +274,7 @@ def list_container_audits(
     page_size: int = Query(50, ge=1, le=200),
     container_id: str | None = Query(default=None),
     result: str | None = Query(default=None),
+    operator: str | None = Query(default=None, description="按操作人（x-user-num）精确筛选"),
     db: Session = Depends(get_db),
 ):
     stmt = select(DatabaseContainerAudit)
@@ -251,6 +282,8 @@ def list_container_audits(
         stmt = stmt.where(DatabaseContainerAudit.container_id == container_id)
     if result:
         stmt = stmt.where(DatabaseContainerAudit.result == result)
+    if operator:
+        stmt = stmt.where(DatabaseContainerAudit.operator == operator.strip())
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
         stmt.order_by(desc(DatabaseContainerAudit.id)).offset((page - 1) * page_size).limit(page_size)

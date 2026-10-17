@@ -238,14 +238,19 @@ export async function runContainerAction(
   containerId: string,
   action: ContainerAction,
   timeout?: number,
+  reason?: string,
 ): Promise<{ container_id: string; name: string; action: string; result: string }> {
+  const body: { timeout?: number; reason?: string } = {}
+  if (timeout != null) body.timeout = timeout
+  // 停止 / 重启后端强制要求原因，随审计落库
+  if (reason) body.reason = reason
   const { data } = await client.post<{
     code: number
     message: string
     data: { container_id: string; name: string; action: string; result: string }
   }>(
     `/api/v1/database-containers/${encodeURIComponent(containerId)}/${action}`,
-    timeout == null ? {} : { timeout },
+    body,
     // 启停要等容器真正停下，比默认 10s 放宽
     { timeout: 20000 },
   )
@@ -265,7 +270,7 @@ export interface ContainerAuditItem {
 }
 
 export async function listContainerAudits(
-  params: { page?: number; page_size?: number; container_id?: string; result?: string } = {},
+  params: { page?: number; page_size?: number; container_id?: string; result?: string; operator?: string } = {},
 ): Promise<ListResult<ContainerAuditItem>> {
   const { data } = await client.get<{ code: number; message: string; data: ListResult<ContainerAuditItem> }>(
     '/api/v1/database-container-audits',

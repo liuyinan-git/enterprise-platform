@@ -117,11 +117,6 @@ def database_overview(
     if unregistered_scope == "managed":
         hidden_unknown = sum(1 for c in unregistered if c["managed_type"] == "unknown")
         unregistered = [c for c in unregistered if c["managed_type"] != "unknown"]
-    # 按类型计数必须在**类型过滤之前**算，否则前端下拉里其他类型会显示成 0 并被禁用，
-    # 用户切过去就切不回来了。
-    by_type: dict[str, int] = {}
-    for c in unregistered:
-        by_type[c["managed_type"]] = by_type.get(c["managed_type"], 0) + 1
     if unregistered_type:
         unregistered = [c for c in unregistered if c["managed_type"] == unregistered_type]
 
@@ -141,10 +136,6 @@ def database_overview(
         "page_size": page_size,
         "unregistered": unregistered,
         "unregistered_total": len(unregistered),
-        # 被「只列受管类型」滤掉的未分类容器数（scope=all 时恒为 0）
-        "unregistered_hidden_unknown": hidden_unknown,
-        # 各类型的未登记数量（不含类型过滤，供下拉显示计数）
-        "unregistered_by_type": by_type,
         "containers_total": len(live),
         "degraded": degraded,
         "error": error,

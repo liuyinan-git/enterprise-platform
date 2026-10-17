@@ -21,7 +21,7 @@ import { canStart, canStop } from '@/modules/database/container-display'
 // 声明即自动暴露给模板，无需赋值给变量
 defineProps<{
   container: ContainerItem | null
-  /** 类型/保护/角色三道门禁都通过才为 true；不通过时不渲染生命周期按钮（不是置灰） */
+  /** 类型/保护/权限三道门禁都通过才为 true；不通过时不渲染生命周期按钮（不是置灰） */
   operable: boolean
 }>()
 

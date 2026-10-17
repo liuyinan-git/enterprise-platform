@@ -131,7 +131,7 @@ export function projectTagType(container: AgentContainerItem): TagType {
   return container.project_key ? 'success' : 'info'
 }
 
-/** 操作门禁：分类未落到唯一项目、或受保护 → 不给启停（角色由调用方叠加）。 */
+/** 操作门禁：分类未落到唯一项目、或受保护 → 不给启停（权限由调用方叠加）。 */
 export function isOperable(container: AgentContainerItem | null | undefined): boolean {
   if (!container) return false
   if (container.protected) return false

@@ -1,7 +1,7 @@
 """项目分组与分类规则接口。
 
-读接口由父 router 覆盖；写接口逐路由加 `require_roles("admin", "agent_admin")`
-（台账编辑是可逆的库内操作，与容器启停刻意分开授权）。
+读接口由父 router 覆盖（`agent:view`）；写接口逐路由要求 `agent:manage`
+（台账编辑是可逆的库内操作，与容器启停 `agent:container` 刻意分开授权）。
 
 本 router 不带 prefix，被 `api.py` 的父 router include（同 container_api.py）。
 """
@@ -19,8 +19,6 @@ from app.modules.agent.models import AgentProjectRule
 from app.modules.agent.schemas import ProjectRuleIn, ProjectRuleUpdate, RuleEnabledIn
 
 router = APIRouter(tags=["agent-platform"])
-
-_LEDGER_ROLES = ("admin", "agent_admin")
 
 
 def _serialize(rule: AgentProjectRule) -> dict:

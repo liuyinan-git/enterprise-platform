@@ -3,7 +3,7 @@
 AI 服务接口（OpenClaw / Hermes / Codex / Dify）与 LangGraph **共用这一套接口**，
 用 `service_type` 区分 —— LangGraph 页只是把 service_type 锁死成 langgraph 调用同一批端点。
 
-读接口由父 router 覆盖；写接口逐路由加 `require_roles("admin", "agent_admin")`。
+读接口由父 router 覆盖（`agent:view`）；写接口逐路由要求 `agent:manage`。
 本 router 不带 prefix，被 `api.py` 的父 router include。
 """
 
@@ -13,30 +13,82 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_permission
+from app.core.auth import CurrentUser, get_current_user, require_permission
 from app.core.db import get_db
 from app.core.response import created, ok, paginated
-from app.modules.agent.models import AgentEndpoint, AgentHealthHistory
+from app.core.security import mask_secret
+from app.modules.agent.models import AgentEndpoint, AgentHealthHistory, AgentRegistry
 from app.modules.agent.schemas import CheckBatchIn, EndpointIn, EndpointUpdate
 from app.modules.agent.services import check_endpoint
 from app.tasks.celery_app import celery_app
 
 router = APIRouter(tags=["agent-platform"])
 
-_LEDGER_ROLES = ("admin", "agent_admin")
+
+def _can_view_secrets(user: CurrentUser) -> bool:
+    """能看端点请求头明文的人：拥有 agent:manage 的管理员；只读用户只看掩码值。"""
+    return "admin" in user.roles or "agent:manage" in user.permissions
 
 
-def _serialize(e: AgentEndpoint) -> dict:
+def _mask_headers(headers) -> dict | list | None:
+    """请求头值脱敏，保留 header 名。
+
+    请求头里常有 `Authorization` / `X-API-Key`，原样回传等于把其他系统的凭据
+    暴露给所有只读用户。写入只允许拥有 `agent:manage` 的用户，所以不存在
+    「看不到却要改」的场景（管理员看到的是明文）。
+    """
+    if not isinstance(headers, dict):
+        return headers
+    masked: dict = {}
+    for key, value in headers.items():
+        if value is None or value == "":
+            masked[key] = value
+        else:
+            masked[key] = mask_secret(str(value))
+    return masked
+
+
+def _agent_map(db: Session, agent_ids) -> dict[str, AgentRegistry]:
+    """批量取端点归属的智能体（一次 IN 查询，避免逐行 N+1）。"""
+    ids = {agent_id for agent_id in agent_ids if agent_id}
+    if not ids:
+        return {}
+    rows = db.scalars(select(AgentRegistry).where(AgentRegistry.agent_id.in_(ids))).all()
+    return {agent.agent_id: agent for agent in rows}
+
+
+def _require_agent(db: Session, agent_id: str) -> AgentRegistry:
+    """端点必须归属一个已登记智能体；录入表单先选智能体再填地址。"""
+    agent = db.scalar(select(AgentRegistry).where(AgentRegistry.agent_id == agent_id))
+    if agent is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"智能体 {agent_id} 不存在，请先在「智能体管理」登记",
+        )
+    return agent
+
+
+def _serialize(
+    e: AgentEndpoint,
+    user: CurrentUser | None = None,
+    agent: AgentRegistry | None = None,
+) -> dict:
+    # user 为 None 表示调用方已经通过 agent:manage（创建 / 更新），可看明文
+    reveal_secrets = user is None or _can_view_secrets(user)
     return {
         "id": e.id,
         "endpoint_code": e.endpoint_code,
         "name": e.name,
         "service_type": e.service_type,
+        # 端点归属的智能体及其容器（列表页一次批量填充）
+        "agent_id": e.agent_id,
+        "agent_name": agent.agent_name if agent else None,
+        "container_name": agent.container_name if agent else None,
         # 列名是 group_name（group 是 SQL 保留字），对外仍叫 group
         "group": e.group_name,
         "url": e.url,
         "method": e.method,
-        "headers": e.headers,
+        "headers": e.headers if reveal_secrets else _mask_headers(e.headers),
         "request_body": e.request_body,
         "expected_status": e.expected_status or [],
         "timeout_seconds": e.timeout_seconds,
@@ -71,12 +123,16 @@ def list_endpoints(
     group: str | None = Query(default=None),
     health_status: str | None = Query(default=None),
     enabled: bool | None = Query(default=None),
+    agent_id: str | None = Query(default=None),
     q: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ):
     stmt = select(AgentEndpoint)
     if service_type:
         stmt = stmt.where(AgentEndpoint.service_type == service_type)
+    if agent_id:
+        stmt = stmt.where(AgentEndpoint.agent_id == agent_id)
     if group:
         stmt = stmt.where(AgentEndpoint.group_name == group)
     if health_status:
@@ -95,7 +151,10 @@ def list_endpoints(
         stmt.order_by(AgentEndpoint.service_type, AgentEndpoint.endpoint_code)
         .offset((page - 1) * page_size).limit(page_size)
     ).all()
-    return paginated([_serialize(e) for e in rows], total, page, page_size)
+    agents = _agent_map(db, (e.agent_id for e in rows))
+    return paginated(
+        [_serialize(e, user, agents.get(e.agent_id)) for e in rows], total, page, page_size
+    )
 
 
 @router.get("/agent/endpoints/options")
@@ -104,10 +163,16 @@ def endpoint_options(db: Session = Depends(get_db)):
     rows = db.scalars(
         select(AgentEndpoint).order_by(AgentEndpoint.service_type, AgentEndpoint.endpoint_code)
     ).all()
+    agents = db.scalars(select(AgentRegistry).order_by(AgentRegistry.agent_name)).all()
     return ok({
         "service_types": sorted({e.service_type for e in rows}),
         "groups": sorted({e.group_name for e in rows if e.group_name}),
         "items": [{"endpoint_code": e.endpoint_code, "name": e.name, "service_type": e.service_type} for e in rows],
+        # 录入表单的「智能体」下拉：端点必须先绑定已登记智能体
+        "agents": [
+            {"agent_id": a.agent_id, "agent_name": a.agent_name, "container_name": a.container_name}
+            for a in agents
+        ],
     })
 
 
@@ -117,10 +182,12 @@ def create_endpoint(payload: EndpointIn, db: Session = Depends(get_db)):
     exists = db.scalar(select(AgentEndpoint).where(AgentEndpoint.endpoint_code == payload.endpoint_code))
     if exists is not None:
         raise HTTPException(status_code=409, detail="端点编码已存在")
+    agent = _require_agent(db, payload.agent_id)
     endpoint = AgentEndpoint(
         endpoint_code=payload.endpoint_code,
         name=payload.name,
         service_type=payload.service_type,
+        agent_id=payload.agent_id,
         group_name=payload.group,
         url=payload.url,
         method=payload.method,
@@ -135,7 +202,7 @@ def create_endpoint(payload: EndpointIn, db: Session = Depends(get_db)):
     db.add(endpoint)
     db.commit()
     db.refresh(endpoint)
-    return created(_serialize(endpoint))
+    return created(_serialize(endpoint, agent=agent))
 
 
 @router.post("/agent/endpoints/check-batch", dependencies=[Depends(require_permission("agent:manage"))])
@@ -164,18 +231,26 @@ def check_endpoints_batch(payload: CheckBatchIn | None = None, db: Session = Dep
 
 
 @router.get("/agent/endpoints/{endpoint_code}")
-def get_endpoint(endpoint_code: str, db: Session = Depends(get_db)):
-    return ok(_serialize(_get(db, endpoint_code)))
+def get_endpoint(
+    endpoint_code: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    endpoint = _get(db, endpoint_code)
+    agent = _agent_map(db, [endpoint.agent_id]).get(endpoint.agent_id)
+    return ok(_serialize(endpoint, user, agent))
 
 
 @router.put("/agent/endpoints/{endpoint_code}", dependencies=[Depends(require_permission("agent:manage"))])
 def update_endpoint(endpoint_code: str, payload: EndpointUpdate, db: Session = Depends(get_db)):
     endpoint = _get(db, endpoint_code)
+    if payload.agent_id is not None:
+        _require_agent(db, payload.agent_id)
     # group 在请求体里叫 group，落到列上是 group_name
     mapping = {
         "group": "group_name",
     }
-    for field in ("name", "service_type", "group", "url", "method", "headers",
+    for field in ("name", "service_type", "agent_id", "group", "url", "method", "headers",
                   "request_body", "expected_status", "timeout_seconds", "enabled",
                   "description", "attributes"):
         value = getattr(payload, field)
@@ -183,7 +258,8 @@ def update_endpoint(endpoint_code: str, payload: EndpointUpdate, db: Session = D
             setattr(endpoint, mapping.get(field, field), value)
     db.commit()
     db.refresh(endpoint)
-    return ok(_serialize(endpoint))
+    agent = _agent_map(db, [endpoint.agent_id]).get(endpoint.agent_id)
+    return ok(_serialize(endpoint, agent=agent))
 
 
 @router.delete("/agent/endpoints/{endpoint_code}", dependencies=[Depends(require_permission("agent:manage"))])

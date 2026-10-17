@@ -133,20 +133,24 @@ def is_protected(labels: dict, name: str) -> tuple[bool, str | None]:
     return False, None
 
 
-def refusal_reason(container: dict) -> str | None:
+def refusal_reason(container: dict, *, registered: bool = False) -> str | None:
     """返回拒绝操作的原因；None 表示可操作。前端与 409 判定共用这一处规则。
 
-    这里比 database 模块多一条收窄：**分类未落到唯一项目的容器一律只读**。
-    归属不明（未分类 / 规则冲突）的容器不该拿到重启权 —— 这是本模块启停面
-    远宽于 database 模块（那边只放行 19 类受管类型）之后仅有的两道逐容器防线之一。
+    - **自保护永远最先判定**：即使容器已登记到某个智能体，平台自身容器仍拒绝；
+    - `registered=True`（容器名已登记在智能体台账）：放行，不再受项目分类门禁约束。
+      智能体管理的口径是「我登记的容器归我管」，分类规则是为未登记容器提供的
+      自动归属机制，不该反过来卡住显式登记；
+    - 未登记容器保持原有收窄：**分类未落到唯一项目（未分类 / 冲突）一律只读**。
     """
     if container["protected"]:
         return f"平台自身容器受保护，禁止该操作（{container['protected_reason']}）"
+    if registered:
+        return None
     if container["conflict"]:
         candidates = "、".join(container.get("candidates") or [])
         return f"分类规则冲突（同时命中 {candidates}），请先解决规则冲突，当前只读"
     if not container["project_key"]:
-        return "未分类到任何项目，未分类容器只读（可在「项目与分类规则」中配置规则）"
+        return "未分类到任何项目，未分类容器只读（可在「项目与分类规则」中配置规则，或在「智能体管理」中登记该容器）"
     return None
 
 

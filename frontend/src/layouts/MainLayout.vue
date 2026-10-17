@@ -64,8 +64,7 @@ const menuGroups: { title: string; items: MenuItem[] }[] = [
     items: [
       { path: '/agents', title: '智能体管理', permission: 'agent:view' },
       { path: '/agent/overview', title: '平台概览', permission: 'agent:view' },
-      // 该页有容器启停按钮，页面可见靠 agent:view，按钮级再按 agent:container 控制
-      { path: '/agent/containers', title: 'Docker 容器', permission: 'agent:view' },
+      // Docker 容器页已合并进「智能体管理」，不再单列菜单
       { path: '/agent/projects', title: '项目与分类规则', permission: 'agent:view' },
       { path: '/agent/endpoints', title: '接口监控', permission: 'agent:view' },
       { path: '/agent/langgraph', title: 'LangGraph 管理', permission: 'agent:view' },

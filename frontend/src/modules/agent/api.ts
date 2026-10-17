@@ -6,19 +6,37 @@ export interface AgentItem {
   agent_id: string
   agent_name: string
   agent_type: string
+  /** 绑定的 Docker 容器名：智能体状态以它为准（容器重建后用同名即可自动对上） */
+  container_name: string | null
+  container_id: string | null
+  container_state: string | null
+  container_status: string | null
+  container_image: string | null
+  container_ports: string[]
+  container_created_at: string | null
+  project_key: string | null
+  project_name: string | null
+  /** 容器是否在 Docker 实况中找到；Docker 不可达时也视为未找到（status=unknown） */
+  container_found: boolean
+  container_protected: boolean
+  container_protected_reason: string | null
   version: string | null
   owner: string | null
   environment: string | null
   enabled: boolean
   attributes: Record<string, unknown> | null
   last_seen_at: string | null
-  status: 'online' | 'offline' | 'disabled'
+  /** 本次离线已告警的时间；非空表示已通知过，恢复时后端清空 */
+  offline_alerted_at: string | null
+  status: 'online' | 'offline' | 'disabled' | 'unknown'
 }
 
 export interface AgentInput {
   agent_id: string
   agent_name: string
   agent_type: string
+  /** 容器名（字母数字开头，允许 . _ -）；留空则按历史心跳方式判定状态 */
+  container_name?: string
   version?: string
   owner?: string
   environment?: string
@@ -31,10 +49,18 @@ export interface AgentListParams {
   page_size?: number
   agent_type?: string
   enabled?: boolean
+  /** 按 agent_id / 名称 / 容器名模糊搜索 */
+  q?: string
 }
 
-export async function listAgents(params: AgentListParams = {}): Promise<ListResult<AgentItem>> {
-  const { data } = await client.get<{ code: number; message: string; data: ListResult<AgentItem> }>(
+export interface AgentListResult extends ListResult<AgentItem> {
+  /** Docker 不可达时为 true：容器信息为空、状态 unknown，台账照常可用 */
+  degraded?: boolean
+  error?: string | null
+}
+
+export async function listAgents(params: AgentListParams = {}): Promise<AgentListResult> {
+  const { data } = await client.get<{ code: number; message: string; data: AgentListResult }>(
     '/api/v1/agents',
     { params },
   )
@@ -68,7 +94,7 @@ export interface AgentAuditItem {
 }
 
 export async function listAgentAudits(
-  params: { page?: number; page_size?: number; agent_id?: string } = {},
+  params: { page?: number; page_size?: number; agent_id?: string; operator?: string } = {},
 ): Promise<ListResult<AgentAuditItem>> {
   const { data } = await client.get<{ code: number; message: string; data: ListResult<AgentAuditItem> }>(
     '/api/v1/agent-audits',
@@ -79,14 +105,35 @@ export async function listAgentAudits(
 
 // ===== AI Agent 平台：概览与系统设置 =====
 
+export interface AgentOverviewItem {
+  agent_id: string
+  agent_name: string
+  agent_type: string
+  container_name: string | null
+  container_id: string | null
+  container_state: string | null
+  container_status: string | null
+  container_image: string | null
+  container_found: boolean
+  project_key: string | null
+  project_name: string | null
+  status: 'online' | 'offline' | 'disabled' | 'unknown'
+  last_seen_at: string | null
+  endpoint_total: number
+  endpoint_unhealthy: number
+}
+
 export interface OverviewData {
-  project_count: number
-  rule_count: number
-  rule_enabled_count: number
-  container_count: number
-  running_count: number
-  stopped_count: number
-  unclassified_count: number
+  /** 已登记（启用中）的智能体总数 */
+  agent_total: number
+  agent_online: number
+  /** 容器未运行或容器不存在 */
+  agent_offline: number
+  /** Docker 不可达，无法判定 */
+  agent_unknown: number
+  /** 未填写容器名、仍按心跳判定的历史智能体 */
+  agent_unbound: number
+  agents: AgentOverviewItem[]
   api_total: number
   api_healthy: number
   api_unhealthy: number
@@ -94,7 +141,7 @@ export interface OverviewData {
   api_by_type: Record<string, number>
   failing_endpoints: FailingEndpoint[]
   history_total: number
-  /** Docker 不可达时为 true；此时容器类数字全为 0 */
+  /** Docker 不可达时为 true；此时智能体状态为 unknown */
   degraded: boolean
   error: string | null
   generated_at: string
@@ -104,6 +151,7 @@ export interface FailingEndpoint {
   endpoint_code: string
   name: string
   service_type: string
+  agent_id: string | null
   health_status: string
   last_http_status: number | null
   last_error: string | null
@@ -134,6 +182,16 @@ export interface ConnectionStatus {
   detail?: string
 }
 
+export interface ServiceRuntime {
+  /** 只有 compose 服务确实在 running 时才为 true */
+  ok: boolean
+  /** running / exited / not_found / unknown */
+  state: string
+  container_id?: string
+  status?: string
+  error?: string
+}
+
 export interface SystemStatusData {
   schedule: { source: string; note: string; items: ScheduleItem[] }
   timeouts: Record<string, StatusValue>
@@ -147,10 +205,15 @@ export interface SystemStatusData {
   }
   probe: { verify_tls: boolean; max_excerpt_chars: number }
   connections: { mysql: ConnectionStatus; redis: ConnectionStatus }
+  /** 调度任务的实际运行态（Docker compose 服务）；本地直接跑 Celery 时为 not_found */
+  runtime: { worker: ServiceRuntime; scheduler: ServiceRuntime }
   auth: {
     gateway_auth_enabled: boolean
     anonymous_admin: boolean
-    roles: Record<string, string[]>
+    /** 本次请求实际解析出的用户、角色与权限（网关认证关闭时为匿名 admin） */
+    current_user: { user_id: string; username: string; roles: string[]; permissions: string[] }
+    /** 静态权限策略：各能力要求的权限码（admin 角色恒放行） */
+    permissions: Record<string, string[]>
   }
   generated_at: string
 }
@@ -307,14 +370,19 @@ export async function runContainerAction(
   containerId: string,
   action: ContainerAction,
   timeout?: number,
+  reason?: string,
 ): Promise<{ container_id: string; name: string; action: string; result: string }> {
+  const body: { timeout?: number; reason?: string } = {}
+  if (timeout != null) body.timeout = timeout
+  // 停止 / 重启后端强制要求原因，随审计落库
+  if (reason) body.reason = reason
   const { data } = await client.post<{
     code: number
     message: string
     data: { container_id: string; name: string; action: string; result: string }
   }>(
     `/api/v1/agent/containers/${encodeURIComponent(containerId)}/${action}`,
-    timeout == null ? {} : { timeout },
+    body,
     // 启停要等容器真正停下，比默认 10s 放宽
     { timeout: 20000 },
   )
@@ -334,7 +402,14 @@ export interface ContainerAuditItem {
 }
 
 export async function listContainerAudits(
-  params: { page?: number; page_size?: number; container_id?: string; project_key?: string; result?: string } = {},
+  params: {
+    page?: number
+    page_size?: number
+    container_id?: string
+    project_key?: string
+    result?: string
+    operator?: string
+  } = {},
 ): Promise<ListResult<ContainerAuditItem>> {
   const { data } = await client.get<{ code: number; message: string; data: ListResult<ContainerAuditItem> }>(
     '/api/v1/agent/container-audits',
@@ -432,6 +507,10 @@ export interface EndpointItem {
   endpoint_code: string
   name: string
   service_type: string
+  /** 归属的已登记智能体；历史端点可能为空 */
+  agent_id: string | null
+  agent_name: string | null
+  container_name: string | null
   /** 列名是 group_name（group 是 SQL 保留字），接口对外叫 group */
   group: string | null
   url: string
@@ -458,6 +537,8 @@ export interface EndpointInput {
   endpoint_code: string
   name: string
   service_type: string
+  /** 必填：端点监控归属的已登记智能体 */
+  agent_id: string
   group?: string
   url: string
   method?: string
@@ -474,6 +555,7 @@ export interface EndpointListParams {
   page?: number
   page_size?: number
   service_type?: string
+  agent_id?: string
   group?: string
   health_status?: string
   enabled?: boolean
@@ -488,15 +570,27 @@ export async function listEndpoints(params: EndpointListParams = {}): Promise<Li
   return data.data
 }
 
+export interface EndpointAgentOption {
+  agent_id: string
+  agent_name: string
+  container_name: string | null
+}
+
 export async function fetchEndpointOptions(): Promise<{
   service_types: string[]
   groups: string[]
   items: { endpoint_code: string; name: string; service_type: string }[]
+  agents: EndpointAgentOption[]
 }> {
   const { data } = await client.get<{
     code: number
     message: string
-    data: { service_types: string[]; groups: string[]; items: { endpoint_code: string; name: string; service_type: string }[] }
+    data: {
+      service_types: string[]
+      groups: string[]
+      items: { endpoint_code: string; name: string; service_type: string }[]
+      agents: EndpointAgentOption[]
+    }
   }>('/api/v1/agent/endpoints/options')
   return data.data
 }

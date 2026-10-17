@@ -6,17 +6,41 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.modules.agent.probes import ALLOWED_METHODS
 
 
+# Docker 容器名：字母数字开头，允许 . _ -，最长 200（Docker 自身限制）。
+_CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+
+
+def _validate_container_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) > 200:
+        raise ValueError("容器名不能超过 200 个字符")
+    if not _CONTAINER_NAME_RE.match(text):
+        raise ValueError("容器名只能包含字母、数字、下划线、点和短横线，且必须以字母或数字开头")
+    return text
+
+
 class AgentIn(BaseModel):
     """智能体登记/更新请求体，按 agent_id 幂等 upsert。"""
     model_config = ConfigDict(extra="forbid")
     agent_id: str = Field(min_length=1, max_length=100)
     agent_name: str = Field(min_length=1, max_length=200)
     agent_type: str = Field(min_length=1, max_length=50)
+    # 智能体以容器方式运行时的容器名；状态监控以它为准
+    container_name: str | None = Field(default=None, max_length=200)
     version: str | None = Field(default=None, max_length=50)
     owner: str | None = Field(default=None, max_length=100)
     environment: str | None = Field(default=None, max_length=50)
     enabled: bool = True
     attributes: dict[str, Any] | list[Any] | None = None
+
+    @field_validator("container_name")
+    @classmethod
+    def _check_container_name(cls, value):
+        return _validate_container_name(value)
 
 
 class AgentUpdate(BaseModel):
@@ -24,11 +48,17 @@ class AgentUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     agent_name: str | None = Field(default=None, max_length=200)
     agent_type: str | None = Field(default=None, max_length=50)
+    container_name: str | None = Field(default=None, max_length=200)
     version: str | None = Field(default=None, max_length=50)
     owner: str | None = Field(default=None, max_length=100)
     environment: str | None = Field(default=None, max_length=50)
     enabled: bool | None = None
     attributes: dict[str, Any] | list[Any] | None = None
+
+    @field_validator("container_name")
+    @classmethod
+    def _check_container_name(cls, value):
+        return _validate_container_name(value)
 
 
 # ===== AI Agent 平台：容器 / 项目规则 / 端点监控 =====
@@ -128,6 +158,8 @@ class EndpointIn(BaseModel):
     endpoint_code: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
     service_type: str = Field(min_length=1, max_length=50)
+    # 端点归属的已登记智能体；录入时先选智能体，再手填地址
+    agent_id: str = Field(min_length=1, max_length=100)
     group: str | None = Field(default=None, max_length=100)
     url: str = Field(min_length=1, max_length=1000)
     method: str = Field(default="GET", max_length=10)
@@ -166,6 +198,7 @@ class EndpointUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, max_length=200)
     service_type: str | None = Field(default=None, max_length=50)
+    agent_id: str | None = Field(default=None, max_length=100)
     group: str | None = Field(default=None, max_length=100)
     url: str | None = Field(default=None, max_length=1000)
     method: str | None = Field(default=None, max_length=10)
@@ -205,6 +238,7 @@ class CheckBatchIn(BaseModel):
 
 
 class ContainerActionIn(BaseModel):
-    """停止 / 重启的宽限期（秒）。不传则用 AGENT_DOCKER_STOP_GRACE_SECONDS。"""
+    """停止 / 重启的参数。`reason` 必填（启动不需要），随审计落库。"""
     model_config = ConfigDict(extra="forbid")
     timeout: int | None = Field(default=None, ge=0, le=60)
+    reason: str | None = Field(default=None, max_length=200)

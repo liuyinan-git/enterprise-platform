@@ -21,6 +21,9 @@ dist/
 celerybeat-schedule*
 celerybeat.pid
 
+# --- 离线镜像包 ---
+deploy/images/
+
 # --- AI 工作区 ---
 .trae/
 

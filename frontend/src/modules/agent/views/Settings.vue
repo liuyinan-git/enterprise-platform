@@ -1,14 +1,4 @@
 <template>
-  <el-alert
-    v-if="data?.auth.anonymous_admin"
-    class="alert"
-    type="warning"
-    :closable="false"
-    show-icon
-    title="OIDC 未开启，管理接口当前为匿名 admin"
-    description="任何能访问后端端口的人都能启停容器。上线前请先接好 OIDC，并在 IdP 侧配置 agent_container_admin 角色。"
-  />
-
   <el-card v-loading="loading">
     <template #header>
       <div class="card-header">
@@ -33,6 +23,25 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <h4 class="section">调度运行状态</h4>
+      <div class="hint">
+        配置表说明「应何时跑」，这里说明「是否真的在跑」。按平台自身 compose 服务
+        （{{ data.docker.protected_project }}）检测；本地直接用 celery 命令启动时显示「未检测到」属正常。
+      </div>
+      <el-table :data="runtimeRows" border stripe size="small" style="width: 100%">
+        <el-table-column prop="label" label="服务" width="190" />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.tag" size="small">{{ row.text }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="detail" label="说明" min-width="320" show-overflow-tooltip />
+      </el-table>
+      <div class="hint">
+        scheduler 不在跑时，上面的调度配置不会触发任何任务；worker 不在跑时，任务即使被触发也无人执行。
+        接口自动探测、监控历史清理、智能体离线告警都依赖这两者。
+      </div>
 
       <h4 class="section">超时配置</h4>
       <el-table :data="timeoutRows" border stripe size="small" style="width: 100%">
@@ -77,18 +86,49 @@
 
       <h4 class="section">权限</h4>
       <el-descriptions :column="1" border size="small">
-        <el-descriptions-item label="OIDC">
+        <el-descriptions-item label="网关认证">
           <el-tag :type="data.auth.gateway_auth_enabled ? 'success' : 'warning'" size="small">
             {{ data.auth.gateway_auth_enabled ? '已开启' : '未开启（匿名 admin）' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="读接口角色">{{ data.auth.roles.read.join(' / ') }}</el-descriptions-item>
-        <el-descriptions-item label="台账写角色">{{ data.auth.roles.ledger_write.join(' / ') }}</el-descriptions-item>
-        <el-descriptions-item label="容器启停角色">{{ data.auth.roles.container_action.join(' / ') }}</el-descriptions-item>
+        <el-descriptions-item label="当前用户">
+          {{ currentUser.username }}<span class="muted">（{{ currentUser.user_id }}）</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="当前角色">
+          <template v-if="currentUser.roles.length">
+            <el-tag v-for="role in currentUser.roles" :key="role" class="role-tag" size="small">{{ role }}</el-tag>
+          </template>
+          <span v-else class="muted">无角色</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="当前权限">
+          <template v-if="currentUser.permissions.length">
+            <el-tag v-for="perm in currentUser.permissions" :key="perm" class="role-tag" size="small" type="info">
+              {{ perm }}
+            </el-tag>
+          </template>
+          <span v-else class="muted">无权限</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="读接口">
+          <el-tag :type="can(data.auth.permissions.read) ? 'success' : 'info'" size="small">
+            {{ can(data.auth.permissions.read) ? '允许' : '拒绝' }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="台账写">
+          <el-tag :type="can(data.auth.permissions.ledger_write) ? 'success' : 'info'" size="small">
+            {{ can(data.auth.permissions.ledger_write) ? '允许' : '拒绝' }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="容器启停">
+          <el-tag :type="can(data.auth.permissions.container_action) ? 'success' : 'info'" size="small">
+            {{ can(data.auth.permissions.container_action) ? '允许' : '拒绝' }}
+          </el-tag>
+        </el-descriptions-item>
       </el-descriptions>
       <div class="hint">
-        容器启停刻意与台账编辑分开授权（<code>agent_container_admin</code> vs <code>agent_admin</code>）：
-        前者会真的中断在跑的服务，影响面差一个量级。未在 IdP 侧配置该角色前，实际只有 admin 可操作。
+        以上按本次请求实际解析出的角色与权限动态计算（admin 恒放行，{{ data.auth.gateway_auth_enabled ? '来源为 APISIX 注入的 x-user-* 请求头' : '当前为匿名 admin，所有能力均放行' }}）。<br />
+        权限策略：读接口 {{ data.auth.permissions.read.join(' / ') }}；台账写 {{ data.auth.permissions.ledger_write.join(' / ') }}；
+        容器启停 {{ data.auth.permissions.container_action.join(' / ') }}——容器启停刻意与台账编辑分开授权，
+        前者会真的中断在跑的服务，影响面差一个量级。
       </div>
 
       <h4 class="section">Docker 代理与保护</h4>
@@ -108,6 +148,56 @@ import { fetchSystemStatus, type SystemStatusData } from '@/modules/agent/api'
 
 const data = ref<SystemStatusData | null>(null)
 const loading = ref(false)
+
+// 后端按本次请求动态解析，网关认证关闭时返回 anonymous / [admin]
+const currentUser = computed(
+  () =>
+    data.value?.auth.current_user ?? {
+      user_id: '—',
+      username: '—',
+      roles: [] as string[],
+      permissions: [] as string[],
+    },
+)
+
+function can(allowed: string[]): boolean {
+  if (currentUser.value.roles.includes('admin')) return true
+  return allowed.some((perm) => currentUser.value.permissions.includes(perm))
+}
+
+type TagType = 'success' | 'warning' | 'info' | 'danger'
+
+const RUNTIME_LABELS: Record<string, string> = {
+  worker: 'Worker（任务执行）',
+  scheduler: 'Scheduler（beat 定时）',
+}
+
+const runtimeRows = computed(() => {
+  const source = data.value?.runtime
+  return Object.keys(RUNTIME_LABELS).map((key) => {
+    const rt = source?.[key as 'worker' | 'scheduler']
+    let text = '未知'
+    let tag: TagType = 'warning'
+    if (rt?.ok) {
+      text = '运行中'
+      tag = 'success'
+    } else if (rt?.state === 'not_found') {
+      text = '未检测到'
+      tag = 'info'
+    } else if (rt?.state === 'unknown') {
+      text = '无法检测'
+      tag = 'warning'
+    } else if (rt) {
+      text = '未运行'
+      tag = 'danger'
+    }
+    const detail =
+      rt?.error ||
+      [rt?.status, rt?.container_id ? `容器 ${rt.container_id}` : ''].filter(Boolean).join(' · ') ||
+      '—'
+    return { label: RUNTIME_LABELS[key], text, tag, detail }
+  })
+})
 
 const TIMEOUT_LABELS: Record<string, string> = {
   docker_request_seconds: 'Docker 读请求',
@@ -156,9 +246,6 @@ onMounted(load)
 </script>
 
 <style scoped>
-.alert {
-  margin-bottom: 12px;
-}
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -173,5 +260,11 @@ onMounted(load)
   color: #909399;
   font-size: 12px;
   line-height: 1.6;
+}
+.muted {
+  color: #909399;
+}
+.role-tag {
+  margin-right: 6px;
 }
 </style>

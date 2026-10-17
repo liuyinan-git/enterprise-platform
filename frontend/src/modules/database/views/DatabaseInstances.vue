@@ -177,6 +177,18 @@
   <ContainerLogDialog v-model:visible="logVisible" :container-id="logTarget?.container_id || ''" :container-name="logTarget?.name" />
 
   <el-drawer v-model="auditVisible" title="容器操作记录" size="62%" @open="loadAudits">
+    <div class="audit-filter">
+      <el-input
+        v-model="auditOperator"
+        placeholder="按操作人筛选"
+        clearable
+        size="small"
+        style="width: 200px"
+        @keyup.enter="searchAudits"
+        @clear="searchAudits"
+      />
+      <el-button size="small" type="primary" @click="searchAudits">查询</el-button>
+    </div>
     <el-table v-loading="auditLoading" :data="auditItems" border stripe style="width: 100%">
       <el-table-column prop="created_at" label="时间" width="180" />
       <el-table-column prop="container_name" label="容器" min-width="150" show-overflow-tooltip />
@@ -190,6 +202,9 @@
         </template>
       </el-table-column>
       <el-table-column prop="operator" label="操作人" width="120" />
+      <el-table-column label="原因" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">{{ operatorReason(row) }}</template>
+      </el-table-column>
       <el-table-column label="说明" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">{{ row.detail ? JSON.stringify(row.detail) : '—' }}</template>
       </el-table-column>
@@ -273,6 +288,7 @@ const auditItems = ref<ContainerAuditItem[]>([])
 const auditTotal = ref(0)
 const auditPage = ref(1)
 const auditPageSize = ref(20)
+const auditOperator = ref('')
 
 // 台账的 db_type 与容器受管类型对齐（同一份清单），另留一个 other 兜底
 const dbTypes = [...MANAGED_TYPES, 'other']
@@ -449,17 +465,35 @@ function openLog(container: ContainerItem) {
 
 async function runAction(container: ContainerItem, action: ContainerAction) {
   const verb = { start: '启动', stop: '停止', restart: '重启' }[action]
+  let reason: string | undefined
   try {
-    await ElMessageBox.confirm(
-      `即将【${verb}】容器「${container.name}」(${container.image})，该操作会中断其服务，确认继续？`,
-      '危险操作',
-      { type: 'warning', confirmButtonText: verb, cancelButtonText: '取消' },
-    )
+    if (action === 'start') {
+      await ElMessageBox.confirm(
+        `即将【${verb}】容器「${container.name}」(${container.image})，确认继续？`,
+        '危险操作',
+        { type: 'warning', confirmButtonText: verb, cancelButtonText: '取消' },
+      )
+    } else {
+      // 停止 / 重启必须填原因，后端同样强制校验并写入审计
+      const { value } = await ElMessageBox.prompt(
+        `即将【${verb}】容器「${container.name}」(${container.image})，该操作会中断其服务。请填写操作原因，会记入审计。`,
+        '危险操作',
+        {
+          type: 'warning',
+          confirmButtonText: verb,
+          cancelButtonText: '取消',
+          inputType: 'textarea',
+          inputPlaceholder: '例如：故障恢复 / 发布窗口 / 资源调整',
+          inputValidator: (v: string) => (v && v.trim().length >= 2) || '请填写操作原因（至少 2 个字符）',
+        },
+      )
+      reason = value.trim()
+    }
   } catch {
     return
   }
   try {
-    await runContainerAction(container.container_id, action)
+    await runContainerAction(container.container_id, action, undefined, reason)
     ElMessage.success(`已${verb}`)
     load(true)
   } catch (e: unknown) {
@@ -474,7 +508,11 @@ function openAudits() {
 async function loadAudits() {
   auditLoading.value = true
   try {
-    const result = await listContainerAudits({ page: auditPage.value, page_size: auditPageSize.value })
+    const result = await listContainerAudits({
+      page: auditPage.value,
+      page_size: auditPageSize.value,
+      operator: auditOperator.value.trim() || undefined,
+    })
     auditItems.value = result.items
     auditTotal.value = result.total
   } catch (e: unknown) {
@@ -482,6 +520,16 @@ async function loadAudits() {
   } finally {
     auditLoading.value = false
   }
+}
+
+function searchAudits() {
+  auditPage.value = 1
+  loadAudits()
+}
+
+function operatorReason(row: ContainerAuditItem) {
+  const value = row.detail?.['operator_reason']
+  return typeof value === 'string' && value ? value : '—'
 }
 
 function actionLabel(action: string) {
@@ -558,5 +606,10 @@ onUnmounted(() => {
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+.audit-filter {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 </style>

@@ -7,7 +7,8 @@ const routes: RouteRecordRaw[] = [
 
   // AI Agent 统一管理平台
   { path: 'agent/overview', name: 'agent-overview', component: () => import('./views/Overview.vue'), meta: { title: '平台概览' } },
-  { path: 'agent/containers', name: 'agent-containers', component: () => import('./views/Containers.vue'), meta: { title: 'Docker 容器' } },
+  // Docker 容器页已合并进「智能体管理」；保留重定向兼容旧书签
+  { path: 'agent/containers', redirect: '/agents' },
   { path: 'agent/projects', name: 'agent-projects', component: () => import('./views/Projects.vue'), meta: { title: '项目与分类规则' } },
   { path: 'agent/endpoints', name: 'agent-endpoints', component: () => import('./views/Endpoints.vue'), meta: { title: '接口监控' } },
   { path: 'agent/langgraph', name: 'agent-langgraph', component: () => import('./views/LangGraph.vue'), meta: { title: 'LangGraph 管理' } },

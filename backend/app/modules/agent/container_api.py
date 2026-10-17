@@ -1,12 +1,12 @@
 """容器实况接口：列表 / 发现 / 详情 / 日志 / 启停重启 / 操作审计。
 
 **读写守卫分离**：本文件里的读接口由父 router（`api.py`）的
-`require_roles("admin", "viewer", "agent_admin")` 覆盖；三个写接口**逐路由**再加
-`require_roles("admin", "agent_container_admin")`。
+`require_permission("agent:view")` 覆盖；三个写接口**逐路由**要求
+`require_permission("agent:container")`。
 
-`agent_container_admin` 刻意**不复用** `agent_admin`：台账编辑是可逆的库内操作，
-容器启停会真的中断在跑的服务，影响面差一个量级，复用等于静默提权。未在 IdP 侧
-配置该角色前，实际只有 `admin` 可用（OIDC 关闭时仍是匿名 admin）。
+权限由 RBAC 统一解析：网关注入的角色 ID 映射成平台角色码，再求出权限集；
+`agent:container` 与台账写 `agent:manage` 刻意分离，可分别授予。网关认证关闭时
+仍是匿名 admin（角色 admin 恒放行）。
 
 注意：本 router **不带 prefix**，它被 `api.py` 的父 router（`prefix="/api/v1"`）include，
 因此这里的 "/agent/containers" 实际暴露为 "/api/v1/agent/containers"。
@@ -25,16 +25,13 @@ from app.core.response import ok, paginated
 from app.core.timeutil import local_now
 from app.modules.agent import containers as container_rules
 from app.modules.agent import docker_client
-from app.modules.agent.models import AgentContainerAudit
+from app.modules.agent.models import AgentContainerAudit, AgentRegistry
 from app.modules.agent.schemas import ContainerActionIn
 from app.modules.agent.services import record_container_audit
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["agent-platform"])
-
-# 控制面动作的角色：viewer 能看，但不能启停
-_ACTION_ROLES = ("admin", "agent_container_admin")
 
 
 def _live_containers(db: Session) -> list[dict]:
@@ -54,11 +51,26 @@ def _match(containers: list[dict], container_id: str) -> dict | None:
     return None
 
 
+def _registered_names(db: Session) -> set[str]:
+    """已登记智能体绑定的容器名集合（一次查询，供启停放行判定）。"""
+    rows = db.scalars(
+        select(AgentRegistry.container_name).where(AgentRegistry.container_name.is_not(None))
+    ).all()
+    return {name for name in rows if name}
+
+
 def _record(db: Session, target: dict, action: str, result: str, user: CurrentUser, detail: dict) -> None:
     """写审计。
 
     **审计写失败绝不能把成功的操作变成 500**，所以这里单独兜住异常。
+
+    `user.username`（x-user-num）可能变，真正的稳定标识是 `user_id`；角色快照用于
+    回答「他当时凭什么权限操作」。两者都塞进 detail 的 JSON，无需改表。
     """
+    payload = dict(detail or {})
+    payload["user_id"] = user.user_id
+    payload["roles"] = sorted(user.roles)
+    payload["permissions"] = sorted(user.permissions)
     try:
         record_container_audit(
             db,
@@ -68,7 +80,7 @@ def _record(db: Session, target: dict, action: str, result: str, user: CurrentUs
             action=action,
             result=result,
             operator=user.username,
-            detail=detail,
+            detail=payload,
         )
         db.commit()
     except SQLAlchemyError:
@@ -76,17 +88,35 @@ def _record(db: Session, target: dict, action: str, result: str, user: CurrentUs
         logger.exception("写入容器操作审计失败 container=%s action=%s", target.get("container_id"), action)
 
 
-def _operate(container_id: str, action: str, timeout: int | None, user: CurrentUser, db: Session) -> dict:
+def _require_reason(payload: ContainerActionIn | None) -> str:
+    """停止 / 重启必须填写原因；启动不要求。
+
+    原因随审计落库，回答「为什么停」——这是事后追责里最容易缺失的一环。
+    """
+    reason = (payload.reason or "").strip() if payload else ""
+    if not reason:
+        raise HTTPException(status_code=422, detail="请填写操作原因")
+    return reason
+
+
+def _operate(
+    container_id: str,
+    action: str,
+    timeout: int | None,
+    user: CurrentUser,
+    db: Session,
+    operator_reason: str | None = None,
+) -> dict:
     live = _live_containers(db)
     target = _match(live, container_id)
     if target is None:
         raise HTTPException(status_code=404, detail="容器不存在")
 
-    reason = container_rules.refusal_reason(target)
-    if reason:
+    refusal = container_rules.refusal_reason(target, registered=target["name"] in _registered_names(db))
+    if refusal:
         # 受保护 / 未分类 / 规则冲突 → **在调用 Docker 之前**就拒绝，并留痕
-        _record(db, target, action, "refused", user, {"reason": reason})
-        raise HTTPException(status_code=409, detail=reason)
+        _record(db, target, action, "refused", user, {"reason": refusal, "operator_reason": operator_reason})
+        raise HTTPException(status_code=409, detail=refusal)
 
     try:
         if action == "start":
@@ -96,13 +126,17 @@ def _operate(container_id: str, action: str, timeout: int | None, user: CurrentU
         else:
             docker_client.restart_container(target["full_id"], timeout)
     except docker_client.ContainerNotFound as exc:
-        _record(db, target, action, "failed", user, {"error": str(exc)})
+        _record(db, target, action, "failed", user, {"error": str(exc), "operator_reason": operator_reason})
         raise HTTPException(status_code=404, detail="容器不存在") from exc
     except docker_client.DockerUnavailable as exc:
-        _record(db, target, action, "failed", user, {"error": str(exc)})
+        _record(db, target, action, "failed", user, {"error": str(exc), "operator_reason": operator_reason})
         raise HTTPException(status_code=503, detail=f"操作失败：{exc}") from exc
 
-    _record(db, target, action, "success", user, {"timeout": timeout, "project_key": target.get("project_key")})
+    _record(db, target, action, "success", user, {
+        "timeout": timeout,
+        "project_key": target.get("project_key"),
+        "operator_reason": operator_reason,
+    })
     return {
         "container_id": target["container_id"],
         "name": target["name"],
@@ -200,6 +234,8 @@ def get_container(container_id: str, db: Session = Depends(get_db)):
 
     state = raw.get("State") or {}
     networks = ((raw.get("NetworkSettings") or {}).get("Networks") or {})
+    registered = target["name"] in _registered_names(db)
+    payload["registered"] = registered
     payload["exec_command"] = container_rules.build_exec_commands(target)
     payload["detail"] = {
         "command": raw.get("Path"),
@@ -213,7 +249,7 @@ def get_container(container_id: str, db: Session = Depends(get_db)):
         "mount_count": len(raw.get("Mounts") or []),
         "restart_policy": ((raw.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name"),
         # 刻意不返回 Config.Env：里面可能带数据库密码 / API key
-        "refusal_reason": container_rules.refusal_reason(target),
+        "refusal_reason": container_rules.refusal_reason(target, registered=registered),
     }
     return ok(payload)
 
@@ -275,7 +311,11 @@ def stop_container(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return ok(_operate(container_id, "stop", payload.timeout if payload else None, user, db), message="stopped")
+    reason = _require_reason(payload)
+    return ok(
+        _operate(container_id, "stop", payload.timeout if payload else None, user, db, reason),
+        message="stopped",
+    )
 
 
 @router.post("/agent/containers/{container_id}/restart", dependencies=[Depends(require_permission("agent:container"))])
@@ -285,7 +325,11 @@ def restart_container(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return ok(_operate(container_id, "restart", payload.timeout if payload else None, user, db), message="restarted")
+    reason = _require_reason(payload)
+    return ok(
+        _operate(container_id, "restart", payload.timeout if payload else None, user, db, reason),
+        message="restarted",
+    )
 
 
 @router.get("/agent/container-audits")
@@ -295,6 +339,7 @@ def list_container_audits(
     container_id: str | None = Query(default=None),
     project_key: str | None = Query(default=None),
     result: str | None = Query(default=None),
+    operator: str | None = Query(default=None, description="按操作人（x-user-num）精确筛选"),
     db: Session = Depends(get_db),
 ):
     stmt = select(AgentContainerAudit)
@@ -304,6 +349,8 @@ def list_container_audits(
         stmt = stmt.where(AgentContainerAudit.project_key == project_key)
     if result:
         stmt = stmt.where(AgentContainerAudit.result == result)
+    if operator:
+        stmt = stmt.where(AgentContainerAudit.operator == operator.strip())
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
         stmt.order_by(desc(AgentContainerAudit.id)).offset((page - 1) * page_size).limit(page_size)

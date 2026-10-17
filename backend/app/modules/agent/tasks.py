@@ -7,18 +7,21 @@ from sqlalchemy import delete, select
 from app.core.db import SessionLocal
 from app.core.timeutil import local_now
 from app.modules.agent.agent_config import agent_settings
-from app.modules.agent.models import AgentEndpoint, AgentHealthHistory, AgentRegistry
-from app.modules.agent.services import agent_status, check_endpoint
+from app.modules.agent.models import AgentEndpoint, AgentHealthHistory
+from app.modules.agent.services import check_endpoint, detect_offline_agents
 from app.tasks.celery_app import celery_app
 
 
 @celery_app.task(name="check_agent_offline")
-def check_agent_offline_task() -> int:
-    """周期检测启用中的智能体心跳是否超时，返回离线数量。"""
+def check_agent_offline_task() -> dict:
+    """周期检测心跳超时并告警（每个离线周期只发一次）。
+
+    返回 `checked/offline/alerted/notify_failed/skipped`，通知失败会在下个周期
+    自动重试，所以 `notify_failed > 0` 不是丢告警，只是本轮没发出去。
+    """
     db = SessionLocal()
     try:
-        rows = db.scalars(select(AgentRegistry).where(AgentRegistry.enabled.is_(True))).all()
-        return sum(1 for a in rows if agent_status(a) == "offline")
+        return detect_offline_agents(db)
     finally:
         db.close()
 

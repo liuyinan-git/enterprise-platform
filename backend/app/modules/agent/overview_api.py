@@ -12,17 +12,18 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.timeutil import local_now
-from app.modules.agent import containers as container_rules
 from app.modules.agent import docker_client
 from app.modules.agent.agent_config import agent_settings
 from app.modules.agent.endpoint_api import agent_beat_schedule
-from app.modules.agent.models import AgentEndpoint, AgentHealthHistory, AgentProjectRule
+from app.modules.agent.models import AgentEndpoint, AgentHealthHistory, AgentProjectRule, AgentRegistry
+from app.modules.agent.services import agent_status, load_container_index
 
 router = APIRouter(tags=["agent-platform"])
 
@@ -80,27 +81,99 @@ def _check_redis() -> dict:
     }
 
 
+def _service_runtime(service: str) -> dict:
+    """按平台自身 compose 服务检测 worker / scheduler 是否在跑。
+
+    这是「调度配置」表最容易被误读的地方：表里列的是 beat_schedule 的**配置**，
+    即使 scheduler 没启动也照样列出来。这里补上运行态，避免把配置当现状。
+
+    本地直接 `celery ... worker/beat`（不经 Docker）时会是 `not_found`，属正常；
+    页面据此提示「本地运行或未启动」，而不是断言一定是故障。
+    """
+    try:
+        containers = docker_client.list_containers()
+    except docker_client.DockerUnavailable as exc:
+        return {"ok": False, "state": "unknown", "error": str(exc)}
+
+    project = agent_settings.agent_protected_project
+    for container in containers:
+        labels = container.get("Labels") or {}
+        if (
+            labels.get("com.docker.compose.project") == project
+            and labels.get("com.docker.compose.service") == service
+        ):
+            state = str(container.get("State") or "").lower() or "unknown"
+            return {
+                "ok": state == "running",
+                "state": state,
+                "container_id": (container.get("Id") or "")[:12],
+                "status": container.get("Status"),
+            }
+    return {"ok": False, "state": "not_found", "error": f"未找到 compose 服务：{service}"}
+
+
 @router.get("/agent/overview")
 def get_overview(db: Session = Depends(get_db)):
-    """首页统计。
+    """首页统计：**只围绕「智能体管理」里已登记的智能体**。
 
-    - 容器类数字来自**实时 Docker**（不可达时归零 + `degraded: true`，绝不 500）
-    - 接口类数字来自 `agent_endpoint` 的最近检查快照（仅 enabled）
+    - 不再统计全宿主机的容器 / 项目 / 分类规则（那些是容器页的旧口径）；
+    - 智能体状态以其绑定容器的运行状态为准（Docker 不可达时 `unknown` + 降级，
+      绝不 500、也不误报离线）；
+    - 接口类数字来自 `agent_endpoint` 的最近检查快照（仅 enabled）。
     """
-    containers: list[dict] = []
-    degraded = False
-    error: str | None = None
-    try:
-        containers = container_rules.list_serialized_containers(db)
-    except docker_client.DockerUnavailable as exc:
-        degraded = True
-        error = str(exc)
+    index, error = load_container_index(db)
+    degraded = error is not None
 
-    rules = container_rules.load_rules(db)
-    running = sum(1 for c in containers if c["state"] == "running")
-    stopped = sum(1 for c in containers if c["state"] != "running")
-    unclassified = sum(1 for c in containers if not c["project_key"])
-    projects = {c["project_key"] for c in containers if c["project_key"] and not c["conflict"]}
+    agents = db.scalars(
+        select(AgentRegistry)
+        .where(AgentRegistry.enabled.is_(True))
+        .order_by(AgentRegistry.agent_name)
+    ).all()
+
+    # 每个智能体的接口数 / 异常接口数：一次 group by，避免 N+1
+    count_rows = db.execute(
+        select(
+            AgentEndpoint.agent_id,
+            func.count().label("total"),
+            func.sum(
+                case(
+                    (AgentEndpoint.health_status.in_(("unhealthy", "timeout", "error")), 1),
+                    else_=0,
+                )
+            ).label("unhealthy"),
+        )
+        .where(AgentEndpoint.enabled.is_(True), AgentEndpoint.agent_id.is_not(None))
+        .group_by(AgentEndpoint.agent_id)
+    ).all()
+    endpoint_counts = {row.agent_id: (row.total, int(row.unhealthy or 0)) for row in count_rows}
+
+    agent_items: list[dict] = []
+    status_counts = {"online": 0, "offline": 0, "unknown": 0, "disabled": 0}
+    unbound = 0
+    for agent in agents:
+        container = index.get(agent.container_name) if agent.container_name else None
+        status = agent_status(agent, container, docker_ok=not degraded)
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if not agent.container_name:
+            unbound += 1
+        total, unhealthy = endpoint_counts.get(agent.agent_id, (0, 0))
+        agent_items.append({
+            "agent_id": agent.agent_id,
+            "agent_name": agent.agent_name,
+            "agent_type": agent.agent_type,
+            "container_name": agent.container_name,
+            "container_id": (container or {}).get("container_id"),
+            "container_state": (container or {}).get("state"),
+            "container_status": (container or {}).get("status"),
+            "container_image": (container or {}).get("image"),
+            "container_found": container is not None,
+            "project_key": (container or {}).get("project_key"),
+            "project_name": (container or {}).get("project_name"),
+            "status": status,
+            "last_seen_at": agent.last_seen_at.isoformat() if agent.last_seen_at else None,
+            "endpoint_total": total,
+            "endpoint_unhealthy": unhealthy,
+        })
 
     endpoint_rows = db.scalars(select(AgentEndpoint).where(AgentEndpoint.enabled.is_(True))).all()
     health_counts = {"healthy": 0, "unhealthy": 0, "timeout": 0, "error": 0, "unknown": 0}
@@ -115,6 +188,7 @@ def get_overview(db: Session = Depends(get_db)):
             "endpoint_code": e.endpoint_code,
             "name": e.name,
             "service_type": e.service_type,
+            "agent_id": e.agent_id,
             "health_status": e.health_status,
             "last_http_status": e.last_http_status,
             "last_error": e.last_error,
@@ -129,13 +203,12 @@ def get_overview(db: Session = Depends(get_db)):
         "code": 0,
         "message": "success",
         "data": {
-            "project_count": len(projects),
-            "rule_count": len(rules),
-            "rule_enabled_count": sum(1 for r in rules if r.enabled),
-            "container_count": len(containers),
-            "running_count": running,
-            "stopped_count": stopped,
-            "unclassified_count": unclassified,
+            "agent_total": len(agents),
+            "agent_online": status_counts.get("online", 0),
+            "agent_offline": status_counts.get("offline", 0),
+            "agent_unknown": status_counts.get("unknown", 0),
+            "agent_unbound": unbound,
+            "agents": agent_items,
             "api_total": len(endpoint_rows),
             "api_healthy": health_counts.get("healthy", 0),
             "api_unhealthy": sum(health_counts.get(k, 0) for k in ("unhealthy", "timeout", "error")),
@@ -151,8 +224,15 @@ def get_overview(db: Session = Depends(get_db)):
 
 
 @router.get("/agent/system-status")
-def get_system_status(db: Session = Depends(get_db)):
-    """系统设置页的全部信息：调度 / 超时 / 存储 / 连通性 / 权限。**只读。**"""
+def get_system_status(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """系统设置页的全部信息：调度 / 超时 / 存储 / 连通性 / 权限。**只读。**
+
+    `auth.current_user` 是**本次请求**解析出来的用户与角色（网关认证关闭时是匿名
+    admin），供前端动态展示「我是谁、我能做什么」，而不是只抄一份静态角色策略。
+    """
     rules_count = db.scalar(select(func.count()).select_from(AgentProjectRule)) or 0
     endpoints_count = db.scalar(select(func.count()).select_from(AgentEndpoint)) or 0
     history_count = db.scalar(select(func.count()).select_from(AgentHealthHistory)) or 0
@@ -198,14 +278,27 @@ def get_system_status(db: Session = Depends(get_db)):
                 "mysql": _check_mysql(db),
                 "redis": _check_redis(),
             },
+            # 配置（上面的 schedule）≠ 运行（这里）。两者都要展示，缺一会误导。
+            "runtime": {
+                "worker": _service_runtime("worker"),
+                "scheduler": _service_runtime("scheduler"),
+            },
             "auth": {
                 "gateway_auth_enabled": settings.gateway_auth_enabled,
                 # 未开网关认证时后端返回匿名 admin —— 与 AGENTS.md 第九条同一个告警
                 "anonymous_admin": not settings.gateway_auth_enabled,
-                "roles": {
-                    "read": ["admin", "viewer", "agent_admin"],
-                    "ledger_write": ["admin", "agent_admin"],
-                    "container_action": ["admin", "agent_container_admin"],
+                # 动态：本次请求的身份、角色与权限（来自 APISIX 注入的 x-user-*，或匿名 admin）
+                "current_user": {
+                    "user_id": user.user_id,
+                    "username": user.username,
+                    "roles": sorted(user.roles),
+                    "permissions": sorted(user.permissions),
+                },
+                # 静态策略：各能力要求的权限码（admin 角色恒放行，不在此处重复列）
+                "permissions": {
+                    "read": ["agent:view"],
+                    "ledger_write": ["agent:manage"],
+                    "container_action": ["agent:container"],
                 },
             },
             "generated_at": local_now().isoformat(),

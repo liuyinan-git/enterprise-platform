@@ -34,9 +34,10 @@ class InstanceUpdate(BaseModel):
 
 
 class ContainerActionIn(BaseModel):
-    """停止 / 重启的宽限期（秒）。不传则用 CONTAINER_STOP_GRACE_SECONDS。"""
+    """停止 / 重启的参数。`reason` 必填（启动不需要），随审计落库。"""
     model_config = ConfigDict(extra="forbid")
     timeout: int | None = Field(default=None, ge=0, le=60)
+    reason: str | None = Field(default=None, max_length=200)
 
 
 class BackupIn(BaseModel):
