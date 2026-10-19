@@ -26,6 +26,8 @@ export interface LogListParams {
   severity?: string
   source_ip?: string
   keyword?: string
+  start?: string
+  end?: string
 }
 
 export async function listLogs(params: LogListParams = {}): Promise<ListResult<LogEventItem>> {

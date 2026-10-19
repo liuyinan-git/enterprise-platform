@@ -63,6 +63,36 @@ _BODY_HEAD_RE = re.compile(
     re.I,
 )
 
+SEVERITY_RANK = {"debug": 0, "info": 1, "notice": 2, "warning": 3, "error": 4, "critical": 5}
+
+
+def canonical_severity(value: str | None) -> str:
+    """把任意级别写法（结构化字段 / 配置阈值）归一到 SEVERITY_RANK 的键。
+
+    ``warn``/``err``/``crit``/``fatal``/``trace`` 等别名经 ``_LEVEL_TO_SEVERITY`` 归一；
+    无法识别时回落到 ``info``。
+    """
+    v = (value or "").strip().lower()
+    if v in SEVERITY_RANK:
+        return v
+    return _LEVEL_TO_SEVERITY.get(v.upper(), "info")
+
+
+def quick_severity(raw_message: str, payload: dict | None) -> str:
+    """轻量级别判断（接入层过滤用，不跑完整解析）。
+
+    优先级：结构化字段 severity/level/log_level → 正文头部级别前缀 → 默认 info。
+    """
+    if isinstance(payload, dict):
+        for key in ("severity", "level", "log_level"):
+            v = payload.get(key)
+            if v:
+                return canonical_severity(str(v))
+    m = _BODY_HEAD_RE.match((raw_message or "").strip())
+    if m and m.group("level"):
+        return _LEVEL_TO_SEVERITY.get(m.group("level").upper(), "info")
+    return "info"
+
 
 def extract_body_fields(event: NormalizedEvent, raw_message: str, payload: dict | None) -> None:
     """从日志正文兜底提取：级别 → severity、[模块] → process_name、正文时间戳存入 normalized_data。

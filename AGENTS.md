@@ -101,6 +101,7 @@ enterprise-platform/
 | `mysql_pool_size` / `mysql_max_overflow` | `5` / `10` | 连接池 |
 | `collector_api_key` | `CHANGE_ME_use_a_long_random_secret` | ⚠️ 采集端认证密钥 |
 | `max_logs_per_batch` / `max_raw_message_chars` | `1000` / `20000` | 接入限制 |
+| `log_ingest_min_severity` | `debug` | 接入层日志级别过滤：低于该级别的日志在入库前丢弃（`debug`=全接，`warning`=丢 debug/info/notice） |
 | `wecom_*` | — | 企业微信自建应用配置与通知级别 |
 | `redis_*` | `localhost` / `6379` | Celery broker/backend |
 | `ai_*` | — | AI 研判（OpenAI 兼容接口） |
@@ -240,7 +241,7 @@ LangGraph **不另开端点**：LangGraph 页直接以 `service_type=langgraph` 
 
 **容器清单本身不落库**，始终实时读 Docker —— 新鲜度正是这个页面的意义，而分类是「实时容器 × 落库规则」的纯函数，落库只会引入一类陈旧数据的 bug。**系统设置页也不建表**（决策：只读展示，间隔走 `.env`）。
 
-迁移脚本 `0001..0019`，其中 `0009_agent_module`、`0010_model_module`、`0011_database_module`、`0012_database_container`、`0013_agent_platform` 为新增模块表，`0014_model_monitor` / `0015_model_consumer_alert` 为模型监控增量，`0016_agent_offline_alert` 为智能体离线告警增量列，`0016_rbac` 新建 RBAC 三表（角色 / 权限 / 角色-权限）并写入种子数据，`0017_agent_container_binding` 新增 `agent_registry.container_name` 与 `agent_endpoint.agent_id`，`0017_model_consumer_usage` 新建调用方用量表并给 `model_registry` 加日志游标，`0018_model_node_proxy` 给 `model_provider` 加 `container_proxy_url`；`0018_merge_rbac_agent_container` 合并 `0016_rbac` 与 `0017_agent_container_binding`，`0019_merge_model_agent` 再合并模型监控与智能体两条分支，保证只有一个 head。`agent_registry.offline_alerted_at` 是离线告警去重标记（非空=本次离线已通知），恢复时清空；离线是状态而非流水，没有单独的告警表。
+迁移脚本 `0001..0020`，其中 `0009_agent_module`、`0010_model_module`、`0011_database_module`、`0012_database_container`、`0013_agent_platform` 为新增模块表，`0014_model_monitor` / `0015_model_consumer_alert` 为模型监控增量，`0016_agent_offline_alert` 为智能体离线告警增量列，`0016_rbac` 新建 RBAC 三表（角色 / 权限 / 角色-权限）并写入种子数据，`0017_agent_container_binding` 新增 `agent_registry.container_name` 与 `agent_endpoint.agent_id`，`0017_model_consumer_usage` 新建调用方用量表并给 `model_registry` 加日志游标，`0018_model_node_proxy` 给 `model_provider` 加 `container_proxy_url`；`0018_merge_rbac_agent_container` 合并 `0016_rbac` 与 `0017_agent_container_binding`，`0019_merge_model_agent` 再合并模型监控与智能体两条分支，保证只有一个 head，`0020_log_event_index` 给 `log_event` 加 `(event_time, id)` 复合索引（支撑日志检索按时间倒序分页）。`agent_registry.offline_alerted_at` 是离线告警去重标记（非空=本次离线已通知），恢复时清空；离线是状态而非流水，没有单独的告警表。
 
 ## 六、核心逻辑
 

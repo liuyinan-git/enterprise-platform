@@ -102,6 +102,7 @@ class LogEvent(Base):
     __table_args__ = (
         UniqueConstraint("raw_log_id", name="uk_event_raw"),
         Index("idx_event_time_severity", "event_time", "severity"),
+        Index("idx_event_time_id", "event_time", "id"),
         Index("idx_event_device_time", "device_id", "event_time"),
         Index("idx_event_type_time", "event_type", "event_time"),
         Index("idx_event_source_time", "source_ip", "event_time"),

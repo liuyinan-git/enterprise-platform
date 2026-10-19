@@ -22,6 +22,8 @@ export interface ListResult<T> {
   total: number
   page: number
   page_size: number
+  /** 日志检索专用：true 表示 total 被 1 万封顶，实际更多（避免大表精确 COUNT） */
+  total_truncated?: boolean
 }
 
 export interface HealthResp {

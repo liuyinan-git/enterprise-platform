@@ -11,6 +11,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.modules.log.models import DeviceRegistry, LogBatch, LogRaw, ProcessingTask
 from app.modules.log.schemas import LogBatchIn
+from app.modules.log.services.normalize import SEVERITY_RANK, canonical_severity, quick_severity
+
+
+def _below_threshold(severity: str) -> bool:
+    """按 log_ingest_min_severity 判断该级别是否应被丢弃（debug=全接）。"""
+    threshold = canonical_severity(settings.log_ingest_min_severity)
+    return SEVERITY_RANK.get(severity, 1) < SEVERITY_RANK.get(threshold, 0)
 
 
 def build_raw_payload(item) -> dict | None:
@@ -105,7 +112,12 @@ def ingest_batch(db: Session, payload: LogBatchIn) -> dict:
         ))
 
         accepted = 0
+        dropped = 0
         for item in payload.logs:
+            raw_payload = build_raw_payload(item)
+            if _below_threshold(quick_severity(item.raw_message, raw_payload)):
+                dropped += 1
+                continue
             stmt = mysql_insert(LogRaw).prefix_with("IGNORE").values(
                 batch_id=payload.batch_id,
                 source_id=payload.source_id,
@@ -114,20 +126,20 @@ def ingest_batch(db: Session, payload: LogBatchIn) -> dict:
                 event_time=to_naive_local(item.event_time),
                 format_type=item.format_type,
                 raw_message=item.raw_message,
-                raw_payload=build_raw_payload(item),
+                raw_payload=raw_payload,
                 process_status="pending",
             )
             result = db.execute(stmt)
             accepted += max(result.rowcount or 0, 0)
 
-        # 心跳联动：登记未知设备并刷新 last_seen_at
+        # 心跳联动：登记未知设备并刷新 last_seen_at（被丢弃的低级别日志也刷新心跳）
         _touch_devices(db, [
             {"device_id": i.device_id, "device_type": i.device_type or "other", "hostname": i.hostname}
             for i in payload.logs
         ])
 
         batch.accepted_count = accepted
-        batch.rejected_count = len(payload.logs) - accepted
+        batch.rejected_count = len(payload.logs) - accepted - dropped
         db.commit()
         return {
             "batch_id": batch.batch_id,
@@ -135,6 +147,7 @@ def ingest_batch(db: Session, payload: LogBatchIn) -> dict:
             "received": batch.received_count,
             "accepted": batch.accepted_count,
             "rejected": batch.rejected_count,
+            "dropped": dropped,
             "status": batch.status,
             "duplicate_batch": False,
         }
@@ -313,12 +326,11 @@ def ingest_fluentbit(db: Session, records: list[dict], source_id: str) -> dict:
     db.add(ProcessingTask(task_type="process_batch", business_key=str(batch.id), status="pending"))
 
     accepted = 0
+    dropped = 0
     devices: list[dict] = []
     for record in records:
         mapped = _map_fluentbit_record(record, source_id, batch_id)
-        stmt = mysql_insert(LogRaw).prefix_with("IGNORE").values(**mapped)
-        result = db.execute(stmt)
-        accepted += max(result.rowcount or 0, 0)
+        # 即使被级别过滤丢弃，也登记设备心跳
         if mapped["device_id"]:
             devices.append({
                 "device_id": mapped["device_id"],
@@ -326,11 +338,17 @@ def ingest_fluentbit(db: Session, records: list[dict], source_id: str) -> dict:
                 "hostname": _first(record, ("hostname", "host")),
                 "container_id": record.get("container_id"),
             })
+        if _below_threshold(quick_severity(mapped["raw_message"], mapped["raw_payload"])):
+            dropped += 1
+            continue
+        stmt = mysql_insert(LogRaw).prefix_with("IGNORE").values(**mapped)
+        result = db.execute(stmt)
+        accepted += max(result.rowcount or 0, 0)
 
     _touch_devices(db, devices)
 
     batch.accepted_count = accepted
-    batch.rejected_count = len(records) - accepted
+    batch.rejected_count = len(records) - accepted - dropped
     db.commit()
     return {
         "batch_id": batch_id,
@@ -338,5 +356,6 @@ def ingest_fluentbit(db: Session, records: list[dict], source_id: str) -> dict:
         "received": len(records),
         "accepted": accepted,
         "rejected": batch.rejected_count,
+        "dropped": dropped,
         "status": batch.status,
     }

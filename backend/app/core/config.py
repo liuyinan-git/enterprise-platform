@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     collector_api_key: str = "CHANGE_ME_use_a_long_random_secret"
     max_logs_per_batch: int = 1000
     max_raw_message_chars: int = 20000
+    # 接入层日志级别过滤：低于该级别的日志直接丢弃（debug=全接；warning=丢 debug/info/notice）
+    log_ingest_min_severity: str = "debug"
     raw_log_retention_days: int = 7
     event_retention_days: int = 7
     wecom_enabled: bool = False

@@ -118,32 +118,48 @@ def list_logs(
     severity: str | None = Query(default=None),
     source_ip: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """管理端：标准化日志列表（分页 + 可选筛选）。"""
-    stmt = select(LogEvent)
+    """管理端：标准化日志列表（分页 + 筛选；默认查今天，计数封顶 1 万）。"""
+    if page > 100:
+        return {"code": 0, "message": "success", "data": {"items": [], "total": 0, "total_truncated": False, "page": page, "page_size": page_size}}
+
+    today_start = local_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    start_ts = start or today_start
+
+    conditions = [LogEvent.event_time >= start_ts]
+    if end:
+        conditions.append(LogEvent.event_time < end)
     if device_type:
-        stmt = stmt.where(LogEvent.device_type == device_type)
+        conditions.append(LogEvent.device_type == device_type)
     if event_category:
-        stmt = stmt.where(LogEvent.event_category == event_category)
+        conditions.append(LogEvent.event_category == event_category)
     if event_type:
-        stmt = stmt.where(LogEvent.event_type == event_type)
+        conditions.append(LogEvent.event_type == event_type)
     if severity:
-        stmt = stmt.where(LogEvent.severity == severity)
+        conditions.append(LogEvent.severity == severity)
     if source_ip:
-        stmt = stmt.where(LogEvent.source_ip == source_ip)
+        conditions.append(LogEvent.source_ip == source_ip)
     if keyword:
         like = f"%{keyword}%"
-        stmt = stmt.where(or_(
+        conditions.append(or_(
             LogEvent.event_type.like(like),
             LogEvent.event_category.like(like),
             LogEvent.username.like(like),
             LogEvent.hostname.like(like),
         ))
 
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    # 计数封顶：最多数 10001 行，超过则标记 truncated（避免大表精确 COUNT）
+    count_sub = select(LogEvent.id).where(*conditions).limit(10001).subquery()
+    counted = db.scalar(select(func.count()).select_from(count_sub)) or 0
+    total_truncated = counted > 10000
+    total = 10000 if total_truncated else counted
+
     rows = db.scalars(
-        stmt.order_by(desc(LogEvent.event_time), desc(LogEvent.id))
+        select(LogEvent).where(*conditions)
+        .order_by(desc(LogEvent.event_time), desc(LogEvent.id))
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
@@ -165,7 +181,7 @@ def list_logs(
         }
         for e in rows
     ]
-    return {"code": 0, "message": "success", "data": {"items": items, "total": total, "page": page, "page_size": page_size}}
+    return {"code": 0, "message": "success", "data": {"items": items, "total": total, "total_truncated": total_truncated, "page": page, "page_size": page_size}}
 
 
 @router.get("/logs/{log_id}")

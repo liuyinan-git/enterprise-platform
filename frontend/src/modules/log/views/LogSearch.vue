@@ -22,6 +22,19 @@
           <el-option v-for="s in severities" :key="s" :label="s" :value="s" />
         </el-select>
       </el-form-item>
+      <el-form-item label="时间范围">
+        <el-date-picker
+          v-model="filters.timeRange"
+          type="datetimerange"
+          range-separator="至"
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          clearable
+          style="width: 360px"
+        />
+        <span class="hint">未选时默认查询今天</span>
+      </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="search">查询</el-button>
         <el-button @click="reset">重置</el-button>
@@ -62,6 +75,7 @@
       @current-change="load"
       @size-change="load"
     />
+    <div v-if="totalTruncated" class="hint">结果过多，仅显示前 10000 条，请缩小时间范围或筛选条件</div>
   </el-card>
 
   <el-drawer v-model="detailVisible" title="日志详情" size="480px">
@@ -104,6 +118,7 @@ import { getLogDetail, listLogs, type LogDetail, type LogEventItem } from '@/mod
 
 const items = ref<LogEventItem[]>([])
 const total = ref(0)
+const totalTruncated = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
 const loading = ref(false)
@@ -115,7 +130,12 @@ const detail = ref<LogDetail | null>(null)
 const deviceTypes = ['server', 'firewall', 'router', 'switch', 'pc', 'rpa', 'application', 'database', 'other']
 const severities = ['debug', 'info', 'notice', 'warning', 'error', 'critical']
 
-const filters = reactive({ keyword: '', device_type: '', severity: '' })
+const filters = reactive({
+  keyword: '',
+  device_type: '',
+  severity: '',
+  timeRange: null as [string, string] | null,
+})
 
 function severityType(sev: string) {
   if (sev === 'critical' || sev === 'error') return 'danger'
@@ -132,9 +152,12 @@ async function load() {
       keyword: filters.keyword || undefined,
       device_type: filters.device_type || undefined,
       severity: filters.severity || undefined,
+      start: filters.timeRange?.[0] || undefined,
+      end: filters.timeRange?.[1] || undefined,
     })
     items.value = result.items
     total.value = result.total
+    totalTruncated.value = !!result.total_truncated
   } finally {
     loading.value = false
   }
@@ -160,6 +183,7 @@ function reset() {
   filters.keyword = ''
   filters.device_type = ''
   filters.severity = ''
+  filters.timeRange = null
   search()
 }
 
@@ -173,6 +197,11 @@ onMounted(load)
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+.hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 .section-title {
   margin: 16px 0 8px;
